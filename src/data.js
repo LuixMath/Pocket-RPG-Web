@@ -115,15 +115,15 @@ const LOCATIONS = {
     exits: ["rota01"], services: ["home", "lab", "mart"], npcs: ["mae", "aroeira"]
   },
   rota01: {
-    name: "Rota 01", chapter: "Capítulo 1", kind: "route",
-    text: "Gramado curto. Bom lugar para treinar sem pressa.",
+    name: "Rota 01", chapter: "Capítulo 1", kind: "route", length: 4,
+    text: "Gramado curto, placas baixas e grama alta nas laterais. A travessia leva alguns passos.",
     exits: ["brisa", "bosque"],
     wild: [[16,2,4,34], [19,2,4,34], [10,2,4,18], [13,3,4,14]],
     items: ["pokeBall", "potion"], trainers: ["niko1", "lia"], npcs: ["guardaRota"]
   },
   bosque: {
-    name: "Amber Woods", chapter: "Capítulo 2", kind: "forest",
-    text: "Folhas antigas cobrem a trilha. Algo elétrico corre entre as árvores.",
+    name: "Amber Woods", chapter: "Capítulo 2", kind: "forest", length: 5,
+    text: "Folhas antigas cobrem a trilha. A luz passa em blocos, como numa tela de Game Boy.",
     exits: ["rota01", "coral"],
     wild: [[10,4,6,25], [13,4,6,25], [46,5,7,18], [48,6,8,15], [25,5,7,7], [43,5,7,10]],
     items: ["antidote", "pokeBall", "repel"], trainers: ["tino", "nara"], npcs: ["batedora"]
@@ -134,15 +134,15 @@ const LOCATIONS = {
     exits: ["bosque", "rota02"], services: ["center", "mart", "gymCoral"], npcs: ["pescadorCoral", "daraHint"]
   },
   rota02: {
-    name: "Rota 02", chapter: "Capítulo 3", kind: "route",
-    text: "A estrada sobe em direção às pedras. Treinadores testam novatos aqui.",
+    name: "Rota 02", chapter: "Capítulo 3", kind: "route", length: 5,
+    text: "A estrada sobe em direção às pedras. O caminho é maior do que parece no mapa.",
     exits: ["coral", "gruta"],
     wild: [[21,7,10,24], [23,7,10,16], [29,7,10,18], [32,7,10,18], [43,7,10,16], [58,8,10,8]],
     items: ["potion", "superPotion", "paralyzeHeal"], trainers: ["caio", "mika"], npcs: ["corredorRota02"]
   },
   gruta: {
-    name: "Lumen Cave", chapter: "Capítulo 3", kind: "cave", requires: { badge: "coral", message: "O guarda libera a Lumen Cave só para quem venceu o Ginásio Coral." },
-    text: "Pedras brilham no escuro. Ecos de Zubat vêm do teto.",
+    name: "Lumen Cave", chapter: "Capítulo 3", kind: "cave", length: 6, requires: { badge: "coral", message: "O guarda libera a Lumen Cave só para quem venceu o Ginásio Coral." },
+    text: "Pedras brilham no escuro. Cada sala da gruta pede atenção ao HP e ao PP.",
     exits: ["rota02", "cristal"],
     wild: [[41,9,12,30], [74,9,12,28], [95,10,13,9], [92,10,13,13], [27,9,11,20]],
     items: ["escapeRope", "superPotion"], trainers: ["bruno"], npcs: ["mineiro"]
@@ -153,15 +153,15 @@ const LOCATIONS = {
     exits: ["gruta", "lago"], services: ["center", "mart", "gymCrystal"], npcs: ["curadoraBeacon", "vitorHint"]
   },
   lago: {
-    name: "North Reef", chapter: "Pós-jogo", kind: "lake", requires: { badge: "crystal", message: "North Reef só abre depois da Insígnia Beacon." },
-    text: "Água escura e mansa. Boatos dizem que a maré cobre uma trilha secreta ao anoitecer.",
+    name: "North Reef", chapter: "Pós-jogo", kind: "lake", length: 5, requires: { badge: "crystal", message: "North Reef só abre depois da Insígnia Beacon." },
+    text: "Água escura e mansa. A passagem avança por píeres quebrados e poças rasas.",
     exits: ["cristal", "mirante"],
     wild: [[60,12,16,30], [54,12,16,25], [120,14,17,16], [129,10,15,29]],
     items: ["superPotion", "pokeBall"], trainers: ["iris"], npcs: ["barqueiro"]
   },
   mirante: {
-    name: "Mistpoint", chapter: "Pós-jogo", kind: "route", requires: { badge: "crystal", message: "Mistpoint fica além da passagem liberada pela Insígnia Beacon." },
-    text: "O mar some na neblina abaixo. O vento aqui parece responder à sua equipe.",
+    name: "Mistpoint", chapter: "Pós-jogo", kind: "route", length: 6, requires: { badge: "crystal", message: "Mistpoint fica além da passagem liberada pela Insígnia Beacon." },
+    text: "O mar some na neblina abaixo. A subida até o mirante exige preparo.",
     exits: ["lago"],
     wild: [[25,15,18,18], [58,15,18,18], [63,14,17,18], [133,16,18,8], [147,16,20,5], [17,16,19,33]],
     items: ["greatBall", "superPotion", "repel"], trainers: ["serena", "niko2"], npcs: ["pesquisadorNeblina"]
@@ -201,7 +201,15 @@ const NPC_LINES = {
 };
 
 const STORY_BEATS = {
-  intro: "O Professor Aroeira deixou três Pokémon no laboratório. Em Veyra, a maré muda rotas, abre atalhos e esconde treinadores que não gostam de perder.",
+  intro: "Bem-vindo ao mundo dos Pokémon. Em Veyra, pequenas cidades vivem entre mata, farol e rotas antigas. Hoje você acorda em Cove para receber seu primeiro parceiro do Professor Aroeira.",
   firstBadge: "Com a Insígnia Coral, o guarda da Lumen Cave passa a respeitar seu nome.",
   secondBadge: "A Insígnia Beacon libera a passagem da North Reef. A jornada continua além dos créditos."
 };
+
+const INTRO_STEPS = [
+  { scene: "bedroom", title: "Quarto", text: "A tela pisca. O rádio antigo chia no criado-mudo. Lá fora, Wingull cortam o céu de Cove." },
+  { scene: "bedroom", title: "Mãe", text: "Mãe: o Professor Aroeira passou cedo. Disse que você finalmente tem idade para carregar uma Pokédex." },
+  { scene: "town", title: "Cove", text: "Você desce as escadas. A brisa do mar entra pela porta. O laboratório fica depois da placa azul." },
+  { scene: "lab", title: "Laboratório", text: "Aroeira: este mundo é dividido entre rotas, cidades e escolhas. Pokémon crescem quando você batalha, mas vencem quando você cuida deles." },
+  { scene: "lab", title: "Primeiro parceiro", text: "Aroeira coloca três Poké Bolas na bancada. A jornada começa quando você escolhe uma delas." }
+];

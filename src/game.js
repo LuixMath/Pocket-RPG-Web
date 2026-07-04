@@ -36,7 +36,8 @@ function freshState() {
       caught: [],
       repelSteps: 0
     },
-    flags: {},
+    flags: { introActive: false, introStep: 0, introScene: "town" },
+    routeProgress: {},
     settings: loadSavedSettings(),
     stats: { steps: 0, wins: 0, captures: 0, whites: 0 },
     lastSavedAt: null
@@ -162,6 +163,7 @@ function migrateSave(loaded) {
   loaded.player.caught ||= [];
   loaded.player.repelSteps ||= 0;
   loaded.flags ||= {};
+  loaded.routeProgress ||= {};
   loaded.stats ||= { steps: 0, wins: 0, captures: 0, whites: 0 };
   loaded.settings = { ...loadSavedSettings(), ...(loaded.settings || {}) };
   loaded.player.party.forEach(mon => { mon.temp ||= { atk: 0, def: 0 }; mon.moves ||= movesFor(mon.id, mon.level); refreshMon(mon, true); });
@@ -195,9 +197,10 @@ function render() {
   document.body.classList.toggle("fast-text", state.settings.text === "fast");
 
   const loc = LOCATIONS[state.player.location];
-  $("#locationName").textContent = loc.name;
-  $("#chapterTag").textContent = loc.chapter;
-  $("#locationBackdrop").className = `location-backdrop ${loc.kind}`;
+  $("#locationName").textContent = state.flags.introActive ? (INTRO_STEPS[state.flags.introStep]?.title || loc.name) : loc.name;
+  $("#chapterTag").textContent = state.flags.introActive ? "Introdução" : loc.chapter;
+  $("#locationBackdrop").className = `location-backdrop ${state.flags.introActive ? (state.flags.introScene || loc.kind) : loc.kind}`;
+  renderOverworld();
   $("#playerName").textContent = state.player.name;
   $("#playerMoney").textContent = `₽ ${state.player.money}`;
   $("#saveState").textContent = state.lastSavedAt ? `salvo ${new Date(state.lastSavedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : "sem save";
@@ -256,6 +259,7 @@ function renderSide() {
 }
 
 function currentObjective() {
+  if (state?.flags?.introActive) return "Siga a apresentação até o laboratório.";
   if (!state?.player?.party?.length) return "Escolha seu primeiro Pokémon.";
   if (!state.flags.rival_niko_1) return "Atravesse a Rota 01 e enfrente Niko.";
   if (!state.flags.trainer_lia) return "Treine na Rota 01 e vença Lia.";
@@ -274,6 +278,66 @@ function locationProgressText(id) {
   return `${locked ? "bloqueado" : "aberto"} • ${defeated}/${trainers} treinadores • ${wildCount} espécies`;
 }
 
+function isRouteLike(loc) {
+  return Boolean(loc?.length && loc?.wild);
+}
+
+function routeProgress(id = state.player.location) {
+  return clamp(Number(state.routeProgress?.[id] || 0), 0, LOCATIONS[id]?.length || 0);
+}
+
+function routeRemaining(id = state.player.location) {
+  const loc = LOCATIONS[id];
+  return Math.max(0, (loc?.length || 0) - routeProgress(id));
+}
+
+function routeIsComplete(id = state.player.location) {
+  const loc = LOCATIONS[id];
+  return !isRouteLike(loc) || routeProgress(id) >= loc.length;
+}
+
+function routeProgressLabel(id = state.player.location) {
+  const loc = LOCATIONS[id];
+  if (!isRouteLike(loc)) return "área aberta";
+  return `${routeProgress(id)}/${loc.length} passos`;
+}
+
+function sceneFlash(kind = "step") {
+  const stage = $("#locationBackdrop");
+  if (!stage || !state?.settings?.motion) return;
+  stage.classList.remove("flash-step", "flash-hit", "flash-catch");
+  void stage.offsetWidth;
+  stage.classList.add(kind === "hit" ? "flash-hit" : kind === "catch" ? "flash-catch" : "flash-step");
+}
+
+function spriteMonForLocation(loc) {
+  if (battle) return enemyMon()?.id || null;
+  if (state?.flags?.lastWildId && loc?.wild) return state.flags.lastWildId;
+  return loc?.wild?.[0]?.[0] || null;
+}
+
+function renderOverworld() {
+  const scene = $("#pixelScene");
+  if (!scene || !state) return;
+  const loc = LOCATIONS[state.player.location];
+  const introScene = state.flags.introActive ? state.flags.introScene : null;
+  const kind = introScene || loc.kind;
+  const progress = routeProgressLabel();
+  const wildId = spriteMonForLocation(loc);
+  scene.className = `pixel-scene scene-${kind}`;
+  const road = isRouteLike(loc) ? `<div class="route-meter"><i style="width:${pct(routeProgress(), loc.length)}%"></i><span>${progress}</span></div>` : "";
+  const wild = wildId ? `<img class="scene-mon" src="${monFront(wildId)}" onerror="this.src='${monFallback(wildId)}'" alt="">` : "";
+  const labBall = kind === "lab" ? `<div class="lab-balls"><span></span><span></span><span></span></div>` : "";
+  scene.innerHTML = `
+    <div class="tile-layer"></div>
+    ${road}
+    <div class="sprite hero-sprite"><b></b></div>
+    <div class="sprite npc-sprite"><b></b></div>
+    ${wild}
+    ${labBall}
+  `;
+}
+
 function talkToNpc() {
   const loc = LOCATIONS[state.player.location];
   const pool = loc.npcs || [];
@@ -290,28 +354,119 @@ function renderActions() {
     return;
   }
 
+  if (state.flags.introActive) {
+    action("Continuar", advanceIntro, "história");
+    action("Pular intro", skipIntroToStarter, "escolher inicial");
+    return;
+  }
+
   const loc = LOCATIONS[state.player.location];
-  action("Explorar", explore, loc.wild ? "grama, itens e treinadores" : "checar a área");
-  action("Conversar", talkToNpc, "NPCs e dicas");
-  action("Mapa", openMap, "rotas e bloqueios");
-  action("Diário", openJournal, "objetivo atual");
+  const hasLocalMenu = Boolean(loc.services?.length);
 
-  if (loc.services?.includes("home")) action("Casa", () => healParty("Você descansou em casa."), "curar equipe");
-  if (loc.services?.includes("lab")) action("Laboratório", labAction, "Professor Aroeira");
-  if (loc.services?.includes("center")) action("Centro Pokémon", () => healParty("Equipe curada."), "curar equipe");
-  if (loc.services?.includes("center")) action("PC / Box", openBox, `${state.player.box.length} no Box`);
-  if (loc.services?.includes("mart")) action("Loja", openShop, "comprar itens");
-  if (loc.services?.includes("gymCoral")) action("Ginásio Coral", () => startTrainerBattle("gymCoral"), "líder Dara");
-  if (loc.services?.includes("gymCrystal")) action("Ginásio Noxport", () => startTrainerBattle("gymCrystal"), "líder Vitor");
+  if (isRouteLike(loc) && !routeIsComplete()) {
+    action("Avançar", advanceRoute, `${routeRemaining()} passos restantes`);
+    action("Procurar", searchWildOnly, "grama alta");
+    action("Voltar", () => travel(state.player.lastLocation || loc.exits[0]), "caminho anterior");
+    action("Menu", openGameMenu, "equipe, bolsa, dex");
+    return;
+  }
 
-  loc.exits.forEach(id => {
+  action(loc.wild ? "Explorar" : "Olhar em volta", loc.wild ? searchWildOnly : () => say(loc.text), loc.wild ? "encontros e itens" : "descrição");
+  if (hasLocalMenu) action("Local", openLocalMenu, "serviços da cidade");
+  else action("Conversar", talkToNpc, "NPCs e dicas");
+  action("Viajar", openTravelMenu, routeIsComplete() ? "rotas conectadas" : routeProgressLabel());
+  action("Menu", openGameMenu, "equipe, bolsa, dex");
+}
+
+function openGameMenu() {
+  const loc = LOCATIONS[state.player.location];
+  const boxButton = loc.services?.includes("center") ? `<button class="choice-btn" value="box" type="submit"><strong>PC / Box</strong><small>${state.player.box.length} guardados</small></button>` : "";
+  modalContent.innerHTML = `
+    <h3>Menu</h3>
+    <div class="game-menu-grid">
+      <button class="choice-btn" value="party" type="submit"><strong>Equipe</strong><small>Pokémon, golpes e EXP</small></button>
+      <button class="choice-btn" value="bag" type="submit"><strong>Bolsa</strong><small>itens e cura</small></button>
+      <button class="choice-btn" value="dex" type="submit"><strong>Pokédex</strong><small>${state.player.caught.length} capturados</small></button>
+      <button class="choice-btn" value="journal" type="submit"><strong>Diário</strong><small>objetivo atual</small></button>
+      <button class="choice-btn" value="map" type="submit"><strong>Mapa</strong><small>${routeProgressLabel()}</small></button>
+      ${boxButton}
+      <button class="choice-btn" value="save" type="submit"><strong>Salvar</strong><small>save local</small></button>
+      <button class="choice-btn" value="settings" type="submit"><strong>Config</strong><small>texto, tema, movimento</small></button>
+    </div>
+    <div class="modal-actions"><button class="mini-btn" value="close">Fechar</button></div>
+  `;
+  modalContent.onsubmit = e => {
+    e.preventDefault();
+    const value = e.submitter?.value;
+    modal.close();
+    if (value === "party") return openPartyMenu();
+    if (value === "bag") return openBagMenu();
+    if (value === "dex") return openDex();
+    if (value === "journal") return openJournal();
+    if (value === "map") return openMap();
+    if (value === "box") return openBox();
+    if (value === "save") return saveGame(false);
+    if (value === "settings") return openSettings();
+  };
+  modal.showModal();
+}
+
+function openLocalMenu() {
+  const loc = LOCATIONS[state.player.location];
+  const options = [];
+  if (loc.services?.includes("home")) options.push(["home", "Casa", "curar equipe"]);
+  if (loc.services?.includes("lab")) options.push(["lab", "Laboratório", "Professor Aroeira"]);
+  if (loc.services?.includes("center")) options.push(["center", "Centro Pokémon", "curar equipe"]);
+  if (loc.services?.includes("mart")) options.push(["mart", "Loja", "comprar itens"]);
+  if (loc.services?.includes("gymCoral")) options.push(["gymCoral", "Ginásio Coral", "líder Dara"]);
+  if (loc.services?.includes("gymCrystal")) options.push(["gymCrystal", "Ginásio Noxport", "líder Vitor"]);
+  options.push(["talk", "Conversar", "NPCs e dicas"]);
+  modalContent.innerHTML = `
+    <h3>${loc.name}</h3>
+    <p>${loc.text}</p>
+    <div class="choice-grid">${options.map(([value, label, hint]) => `<button class="choice-btn" value="${value}" type="submit"><strong>${label}</strong><small>${hint}</small></button>`).join("")}</div>
+    <div class="modal-actions"><button class="mini-btn" value="close">Fechar</button></div>
+  `;
+  modalContent.onsubmit = e => {
+    e.preventDefault();
+    const value = e.submitter?.value;
+    modal.close();
+    if (value === "home") return healParty("Você descansou em casa.");
+    if (value === "lab") return labAction();
+    if (value === "center") return healParty("Equipe curada.");
+    if (value === "mart") return openShop();
+    if (value === "gymCoral") return startTrainerBattle("gymCoral");
+    if (value === "gymCrystal") return startTrainerBattle("gymCrystal");
+    if (value === "talk") return talkToNpc();
+  };
+  modal.showModal();
+}
+
+function openTravelMenu() {
+  const current = LOCATIONS[state.player.location];
+  const canExitForward = routeIsComplete();
+  const nodes = current.exits.map(id => {
     const next = LOCATIONS[id];
-    action(`Ir: ${next.name}`, () => travel(id), next.requires ? "bloqueio possível" : "viajar");
-  });
-
-  action("Mochila", openBagMenu, "usar itens");
-  action("Equipe", openPartyMenu, "ver detalhes");
-  action("Pokédex", openDex, `${state.player.caught.length} capturados`);
+    const locked = next.requires?.badge && !state.player.badges.includes(next.requires.badge);
+    const isBack = id === state.player.lastLocation;
+    const disabled = locked || (!canExitForward && !isBack);
+    const hint = locked ? "bloqueado" : disabled ? `${routeRemaining()} passos restantes` : isBack ? "voltar" : "ir";
+    return `<button class="choice-btn" value="${id}" type="submit" ${disabled ? "disabled" : ""}><strong>${next.name}</strong><small>${hint}</small></button>`;
+  }).join("");
+  modalContent.innerHTML = `
+    <h3>Viajar</h3>
+    <p>${isRouteLike(current) ? `Progresso da área: ${routeProgressLabel()}.` : "Escolha o próximo caminho."}</p>
+    <div class="choice-grid">${nodes}</div>
+    <div class="modal-actions"><button class="mini-btn" value="map">Mapa completo</button><button class="mini-btn" value="close">Fechar</button></div>
+  `;
+  modalContent.onsubmit = e => {
+    e.preventDefault();
+    const value = e.submitter?.value;
+    modal.close();
+    if (value === "map") return openMap();
+    if (value && value !== "close") return travel(value);
+  };
+  modal.showModal();
 }
 
 function renderBattleActions() {
@@ -363,19 +518,30 @@ function renderBattle() {
   $("#enemySprite").onerror = () => { $("#enemySprite").src = monFallback(foe.id); };
   $("#playerSprite").src = monBack(ally.id);
   $("#playerSprite").onerror = () => { $("#playerSprite").src = monFallback(ally.id); };
-  $("#enemyHud").innerHTML = hudHtml(foe);
-  $("#playerHud").innerHTML = hudHtml(ally, true);
+  $("#enemyHud").innerHTML = hudHtml(foe, false, battle.enemyTeam, battle.enemyIndex);
+  $("#playerHud").innerHTML = hudHtml(ally, true, state.player.party, battle.playerIndex);
 }
 
-function hudHtml(mon, showHp = false) {
+function hudHtml(mon, showHp = false, team = [], activeIndex = 0) {
   const hpPercent = pct(mon.hp, mon.maxHp);
+  const expPercent = showHp ? pct(mon.exp || 0, mon.nextExp || 1) : 0;
   const hpClass = hpPercent <= 25 ? "low" : hpPercent <= 55 ? "mid" : "";
   return `
     <div class="hud-top"><span>${mon.nickname || mon.name}</span><span>Lv.${mon.level}</span></div>
-    <div class="hpbar ${hpClass}"><i style="width:${hpPercent}%"></i></div>
-    ${showHp ? `<small>HP ${mon.hp}/${mon.maxHp}</small>` : ""}
-    ${mon.status ? `<small>${statusName(mon.status)}</small>` : ""}
+    <div class="team-slots">${teamSlotsHtml(team, activeIndex)}</div>
+    <div class="hp-label"><b>HP</b><div class="hpbar ${hpClass}"><i style="width:${hpPercent}%"></i></div></div>
+    ${showHp ? `<small class="hp-number">${mon.hp}/${mon.maxHp}</small><div class="expbar"><i style="width:${expPercent}%"></i></div>` : ""}
+    ${mon.status ? `<small class="status-pill">${statusName(mon.status)}</small>` : ""}
   `;
+}
+
+function teamSlotsHtml(team = [], activeIndex = 0) {
+  const total = Math.max(6, team.length || 0);
+  return Array.from({ length: total }, (_, idx) => {
+    const mon = team[idx];
+    const cls = mon ? (mon.hp <= 0 ? "slot fainted" : idx === activeIndex ? "slot active" : "slot filled") : "slot";
+    return `<span class="${cls}"></span>`;
+  }).join("");
 }
 
 function labAction() {
@@ -400,47 +566,96 @@ function healParty(message) {
 }
 
 function travel(id) {
+  const current = LOCATIONS[state.player.location];
   const next = LOCATIONS[id];
+  if (!next) return;
   if (next.requires?.badge && !state.player.badges.includes(next.requires.badge)) {
     say(next.requires.message);
     return;
   }
+  if (isRouteLike(current) && !routeIsComplete() && id !== state.player.lastLocation) {
+    say(`Você ainda não atravessou ${current.name}. Avance mais ${routeRemaining()} passo(s).`);
+    return;
+  }
+  const previous = state.player.location;
   state.player.location = id;
+  state.player.lastLocation = previous;
+  if (isRouteLike(next)) state.routeProgress[id] = 0;
   state.stats.steps += 1;
   if (state.player.repelSteps > 0) state.player.repelSteps -= 1;
+  sceneFlash("step");
   say(next.text);
   render();
 }
 
-function explore() {
+function advanceRoute() {
+  const loc = LOCATIONS[state.player.location];
+  if (!isRouteLike(loc)) return explore();
+  if (routeIsComplete()) {
+    say(`${loc.name} já foi atravessada. Escolha Viajar para seguir caminho.`);
+    render();
+    return;
+  }
+
+  state.routeProgress[state.player.location] = routeProgress() + 1;
+  state.stats.steps += 1;
+  if (state.player.repelSteps > 0) state.player.repelSteps -= 1;
+  sceneFlash("step");
+
+  const undefeated = (loc.trainers || []).filter(id => !state.flags[TRAINERS[id].flag]);
+  if (undefeated.length && Math.random() < .22) {
+    startTrainerBattle(pick(undefeated));
+    return;
+  }
+
+  if (loc.items?.length && Math.random() < .16) {
+    const item = pick(loc.items);
+    addItem(item, 1);
+    say(`Passo ${routeProgress()}/${loc.length}. Você encontrou ${ITEMS[item].name}.`);
+    render();
+    return;
+  }
+
+  if (state.player.repelSteps > 0 && Math.random() < .65) {
+    say(`Passo ${routeProgress()}/${loc.length}. O Repelente manteve a grama quieta.`);
+    render();
+    return;
+  }
+
+  if (Math.random() < .68) {
+    const encounter = weightedEncounter(loc.wild);
+    state.flags.lastWildId = encounter.id;
+    startWildBattle(encounter.id, rand(encounter.min, encounter.max));
+    return;
+  }
+
+  const done = routeIsComplete();
+  say(done ? `${loc.name} foi atravessada. Agora dá para seguir pela saída.` : `Passo ${routeProgress()}/${loc.length}. Nada apareceu.`);
+  render();
+}
+
+function searchWildOnly() {
   const loc = LOCATIONS[state.player.location];
   if (!loc.wild) {
     say(loc.text);
     return;
   }
-
-  const undefeated = (loc.trainers || []).filter(id => !state.flags[TRAINERS[id].flag]);
-  if (undefeated.length && Math.random() < .18) {
-    startTrainerBattle(pick(undefeated));
-    return;
-  }
-
-  if (loc.items?.length && Math.random() < .18) {
-    const item = pick(loc.items);
-    addItem(item, 1);
-    say(`Você encontrou ${ITEMS[item].name}.`);
-    render();
-    return;
-  }
-
   if (state.player.repelSteps > 0 && Math.random() < .7) {
     say("O Repelente manteve a grama quieta.");
     render();
     return;
   }
-
   const encounter = weightedEncounter(loc.wild);
+  state.flags.lastWildId = encounter.id;
   startWildBattle(encounter.id, rand(encounter.min, encounter.max));
+}
+
+function explore() {
+  const loc = LOCATIONS[state.player.location];
+  if (isRouteLike(loc) && !routeIsComplete()) return advanceRoute();
+  if (loc.wild) return searchWildOnly();
+  say(loc.text);
+  render();
 }
 
 function weightedEncounter(table) {
@@ -636,6 +851,7 @@ function useMove(attacker, defender, moveKey, enemySide) {
   const raw = (((2 * attacker.level / 5 + 2) * move.power * (attack / defense)) / 50 + 2) * stab * typeMult * random * crit;
   const damage = typeMult === 0 ? 0 : clamp(Math.floor(raw), 1, defender.hp);
   defender.hp = clamp(defender.hp - damage, 0, defender.maxHp);
+  if (damage > 0) sceneFlash("hit");
 
   let text = `${who} usou ${move.name}. Causou ${damage} de dano.`;
   if (crit > 1) text += " Golpe crítico.";
@@ -771,6 +987,7 @@ function useBattleItem(key) {
       if (sentToBox) state.player.box.push(caught);
       else state.player.party.push(caught);
       battle = null;
+      sceneFlash("catch");
       say(`${item.name} balançou... clicou!\n${foe.name} foi capturado.${sentToBox ? " Foi enviado para o Box." : ""}`);
       render();
       return;
@@ -1009,12 +1226,24 @@ function openPartyMenu() {
 function showPokemonDetails(idx) {
   const mon = state.player.party[idx];
   if (!mon) return;
-  const moves = mon.moves.map(slot => `${MOVES[slot.key].name} (${slot.pp}/${MOVES[slot.key].pp})`).join(" • ");
+  const moves = mon.moves.map(slot => {
+    const move = MOVES[slot.key];
+    return `<div class="move-card"><b>${move.name}</b><span>${TYPES[move.type]} • PP ${slot.pp}/${move.pp}</span><small>${move.power ? `Poder ${move.power}` : "status"}</small></div>`;
+  }).join("");
   modalContent.innerHTML = `
     <h3>${mon.nickname || mon.name}</h3>
-    <p>Lv.${mon.level} • ${mon.types.map(t => TYPES[t]).join(" / ")} • EXP ${mon.exp}/${mon.nextExp}</p>
-    <p>HP ${mon.hp}/${mon.maxHp} • ATQ ${mon.stats.atk} • DEF ${mon.stats.def} • VEL ${mon.stats.spd}</p>
-    <p>${moves}</p>
+    <div class="party-detail">
+      <img src="${monFront(mon.id)}" onerror="this.src='${monFallback(mon.id)}'" alt="${mon.name}">
+      <div>
+        <p>Lv.${mon.level} • ${mon.types.map(t => TYPES[t]).join(" / ")}</p>
+        <div class="hp-label"><b>HP</b><div class="hpbar"><i style="width:${pct(mon.hp, mon.maxHp)}%"></i></div></div>
+        <small>${mon.hp}/${mon.maxHp} HP • EXP ${mon.exp}/${mon.nextExp}</small>
+        <div class="expbar"><i style="width:${pct(mon.exp, mon.nextExp)}%"></i></div>
+        <p>ATQ ${mon.stats.atk} • DEF ${mon.stats.def} • VEL ${mon.stats.spd}</p>
+      </div>
+    </div>
+    <h4>Golpes</h4>
+    <div class="move-grid">${moves}</div>
     <div class="modal-actions">
       <button class="mini-btn" value="potion">Usar Poção</button>
       <button class="mini-btn" value="close">Fechar</button>
@@ -1060,13 +1289,14 @@ function openMap() {
   const nodes = LOCATION_ORDER.map(id => {
     const loc = LOCATIONS[id];
     const locked = loc.requires?.badge && !state.player.badges.includes(loc.requires.badge);
-    const canTravel = !locked && current.exits.includes(id);
+    const isBack = id === state.player.lastLocation;
+    const canTravel = !locked && current.exits.includes(id) && (routeIsComplete() || isBack);
     const here = id === state.player.location;
     const icon = loc.kind === "town" ? "⌂" : loc.kind === "cave" ? "◆" : loc.kind === "lake" ? "≈" : "•";
     return `<button class="choice-btn map-node ${here ? "current" : ""}" value="${id}" type="submit" ${(!canTravel || here) ? "disabled" : ""}>
       <span class="map-dot">${icon}</span>
       <span><strong>${loc.name}</strong><small>${locationProgressText(id)}</small></span>
-      <small>${here ? "aqui" : locked ? "lock" : canTravel ? "ir" : "rota"}</small>
+      <small>${here ? "aqui" : locked ? "lock" : canTravel ? "ir" : isRouteLike(current) ? `${routeRemaining()} passos` : "rota"}</small>
     </button>`;
   }).join("");
   modalContent.innerHTML = `
@@ -1112,11 +1342,11 @@ function openDex() {
     const seen = state.player.seen.includes(id);
     const caught = state.player.caught.includes(id);
     const mon = POKEMON[id];
-    return `<div class="dex-card ${seen ? "" : "unseen"}">
+    return `<button class="dex-card ${seen ? "" : "unseen"}" value="${id}" type="submit" ${seen ? "" : "disabled"}>
       <img src="${monFront(id)}" onerror="this.src='${monFallback(id)}'" alt="${seen ? mon.name : "Pokémon não visto"}">
       <strong>${seen ? mon.name : "???"}</strong>
       <small>#${String(id).padStart(3, "0")} • ${caught ? "capturado" : seen ? "visto" : "não visto"}</small>
-    </div>`;
+    </button>`;
   }).join("");
   modalContent.innerHTML = `
     <h3>Pokédex Veyra</h3>
@@ -1124,7 +1354,40 @@ function openDex() {
     <div class="dex-grid">${cards}</div>
     <div class="modal-actions"><button class="mini-btn" value="close">Fechar</button></div>
   `;
-  modalContent.onsubmit = e => { e.preventDefault(); modal.close(); };
+  modalContent.onsubmit = e => {
+    e.preventDefault();
+    const value = e.submitter?.value;
+    modal.close();
+    if (value && value !== "close") showDexDetails(Number(value));
+  };
+  modal.showModal();
+}
+
+function showDexDetails(id) {
+  const mon = POKEMON[id];
+  if (!mon || !state.player.seen.includes(id)) return openDex();
+  const caught = state.player.caught.includes(id);
+  const learn = mon.learn.map(([lvl, move]) => `<span>${lvl}: ${MOVES[move]?.name || move}</span>`).join("");
+  const areas = LOCATION_ORDER.filter(locId => LOCATIONS[locId].wild?.some(row => row[0] === id)).map(locId => LOCATIONS[locId].name).join(" • ") || "registro especial";
+  modalContent.innerHTML = `
+    <h3>#${String(id).padStart(3, "0")} ${mon.name}</h3>
+    <div class="dex-detail">
+      <img src="${monFront(id)}" onerror="this.src='${monFallback(id)}'" alt="${mon.name}">
+      <div>
+        <p><b>${mon.types.map(t => TYPES[t]).join(" / ")}</b></p>
+        <p>Status: ${caught ? "capturado" : "visto"}</p>
+        <p>Onde aparece: ${areas}</p>
+        <div class="move-chip-list">${learn}</div>
+      </div>
+    </div>
+    <div class="modal-actions"><button class="mini-btn" value="back">Voltar</button><button class="mini-btn" value="close">Fechar</button></div>
+  `;
+  modalContent.onsubmit = e => {
+    e.preventDefault();
+    const value = e.submitter?.value;
+    modal.close();
+    if (value === "back") openDex();
+  };
   modal.showModal();
 }
 function openSettings() {
@@ -1187,15 +1450,61 @@ function startNewGame() {
       <label>Nome do treinador</label>
       <input name="player" maxlength="14" value="Luiz" autocomplete="off">
     </div>
-    <label class="label">Inicial</label>
-    <div class="choice-grid">
-      ${starterButton(1, "Bulbasaur")}
-      ${starterButton(4, "Charmander")}
-      ${starterButton(7, "Squirtle")}
-    </div>
     <div class="modal-actions">
       <button class="mini-btn primary" value="start">Começar</button>
       <button class="mini-btn" value="close">Cancelar</button>
+    </div>
+  `;
+  modalContent.onsubmit = e => {
+    e.preventDefault();
+    if (e.submitter?.value === "close") return modal.close();
+    const data = new FormData(modalContent);
+    const name = String(data.get("player") || "Luiz").trim().slice(0, 14) || "Luiz";
+    state = freshState();
+    state.player.name = name;
+    state.player.location = "brisa";
+    state.flags.introActive = true;
+    state.flags.introStep = 0;
+    state.flags.introScene = INTRO_STEPS[0].scene;
+    modal.close();
+    setScreen("game");
+    playIntroStep();
+    render();
+  };
+  modal.showModal();
+}
+
+function playIntroStep() {
+  const step = INTRO_STEPS[state.flags.introStep];
+  if (!step) return openStarterChoice();
+  state.flags.introScene = step.scene;
+  say(step.text);
+  render();
+}
+
+function advanceIntro() {
+  state.flags.introStep += 1;
+  if (state.flags.introStep >= INTRO_STEPS.length) return openStarterChoice();
+  playIntroStep();
+}
+
+function skipIntroToStarter() {
+  state.flags.introStep = INTRO_STEPS.length;
+  state.flags.introScene = "lab";
+  openStarterChoice();
+}
+
+function openStarterChoice() {
+  modalContent.innerHTML = `
+    <h3>Escolha seu parceiro</h3>
+    <p>Aroeira: uma Poké Bola muda a rota inteira. Escolha com calma.</p>
+    <div class="starter-grid">
+      ${starterButton(1, "Bulbasaur", "seguro, resistente, ótimo contra Pedra e Água")}
+      ${starterButton(4, "Charmander", "ofensivo, rápido, bom contra Inseto e Grama")}
+      ${starterButton(7, "Squirtle", "defensivo, estável, forte contra Pedra e Fogo")}
+    </div>
+    <div class="modal-actions">
+      <button class="mini-btn primary" value="start">Confirmar</button>
     </div>
   `;
   modalSelection = 1;
@@ -1209,29 +1518,27 @@ function startNewGame() {
   });
   modalContent.onsubmit = e => {
     e.preventDefault();
-    if (e.submitter?.value === "close") return modal.close();
-    const data = new FormData(modalContent);
-    const name = String(data.get("player") || "Luiz").trim().slice(0, 14) || "Luiz";
-    state = freshState();
-    state.player.name = name;
     const starter = createMon(modalSelection || 1, 5);
     state.player.party.push(starter);
     addSeen(starter.id);
     addCaught(starter.id);
     state.flags.starter = true;
+    state.flags.introActive = false;
+    state.flags.introScene = "town";
+    state.flags.introDone = true;
     modal.close();
-    setScreen("game");
-    say(`Aroeira: ${name}, sua jornada começa agora.\n${starter.name} entrou para a equipe.`);
+    say(`Aroeira: ${starter.name} agora é seu parceiro. A Rota 01 espera lá fora.`);
     saveGame(true);
     render();
   };
   modal.showModal();
 }
 
-function starterButton(id, name) {
+function starterButton(id, name, hint = "") {
   return `<button class="choice-btn ${id === 1 ? "primary" : ""}" data-id="${id}" type="button">
     <img src="${monFront(id)}" onerror="this.src='${monFallback(id)}'" alt="${name}">
     <strong>${name}</strong>
+    <small>${hint}</small>
   </button>`;
 }
 
@@ -1337,10 +1644,10 @@ function init() {
   $("#settingsBtn").addEventListener("click", openSettings);
   $("#quickSaveBtn").addEventListener("click", () => saveGame(false));
   $("#mapTopBtn").addEventListener("click", openMap);
+  $("#dockMenuBtn").addEventListener("click", openGameMenu);
+  $("#dockPartyBtn").addEventListener("click", openPartyMenu);
   $("#dockMapBtn").addEventListener("click", openMap);
-  $("#dockJournalBtn").addEventListener("click", openJournal);
-  $("#dockBagBtn").addEventListener("click", openBagMenu);
-  $("#dockDexBtn").addEventListener("click", openDex);
+  $("#dockSaveBtn").addEventListener("click", () => saveGame(false));
   $("#openSettingsBtn").addEventListener("click", openSettings);
   $("#toMenuBtn").addEventListener("click", () => { battle = null; setScreen("menu"); });
   if (!loadGame()) $("#continueBtn").disabled = true;

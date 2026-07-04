@@ -1,31 +1,29 @@
 # Pokémon Veyra RPG
 
-RPG textual fan-made de Pokémon com visual retrô inspirado na era Game Boy Color / Pokémon Crystal.
+RPG retrô textual/visual fan-made de Pokémon com visual retrô inspirado na era Game Boy Color / Pokémon Crystal.
 
 **Criação:** Luiz Matheus — Luix Studios
 
 ## Versão atual
 
-**v1.2.4 — Veyra Identity Update**
+**v1.3.0 — Overworld & Battle Polish**
 
-Esta versão mantém a base PWA/mobile e troca o nome para algo mais curto, sonoro e com cara de marca própria: **Pokémon Veyra**.
-
-A ideia é fugir dos nomes comuns de hack rom baseados em cor, pedra, luz, sombra, cristal, prisma ou clima.
+Esta versão corrige a sensação de protótipo: separa melhor menu/jogo, simplifica os comandos, adiciona introdução jogável, representação visual em sprites, rotas por passos e uma tela de batalha mais próxima dos jogos clássicos.
 
 ## O que já tem
 
 - História própria na Região Veyra
 - Cidades, rotas, floresta, caverna, área pós-jogo e ginásios
-- Exploração com encontros selvagens, itens, NPCs e treinadores
+- Exploração por passos nas rotas, com encontros selvagens, itens, NPCs e treinadores
 - Rival recorrente com equipe ajustada ao inicial escolhido
-- Batalha por turnos com menu `Lutar / Mochila / Pokémon / Fugir`
+- Batalha por turnos com menu `Lutar / Mochila / Pokémon / Fugir`, HUD com nome, level, HP, EXP e slots da equipe
 - Tipos, efetividade, PP, dano, crítico, status, EXP e evolução
 - Captura com Poké Bola e Grande Bola, com chance baseada em HP/status
 - Equipe, Box, mochila, Pokédex visual, dinheiro e insígnias
 - Loja, Centro Pokémon, save local e configurações
 - Mapa da região, Diário com objetivo atual e progresso
-- Atalhos mobile fixos: Mapa, Diário, Bolsa e Dex
-- Sprites carregados do repositório público da PokéAPI
+- Atalhos mobile fixos simplificados: Menu, Equipe, Mapa e Salvar
+- Sprites de Pokémon/itens carregados do repositório público da PokéAPI e sprites CSS próprios para personagens/cenários
 - Pronto para GitHub Pages, sem Vite, sem React e sem processo de build
 
 ## Como rodar
@@ -80,6 +78,21 @@ Depois disso, o jogo aparece como um app na tela inicial. O save fica salvo no p
 Os sprites de Pokémon e itens são carregados via URLs públicas do projeto PokéAPI Sprites.
 
 Este é um projeto fã para estudo/portfólio. Pokémon, nomes, sprites e marcas pertencem aos seus respectivos donos. O código, montagem, progressão, interface e adaptação deste projeto são de Luiz Matheus / Luix Studios.
+
+
+## Log v1.3.0
+
+- Corrigido o problema visual de menu e tela do jogo aparecerem juntos com regras CSS mais fortes para telas ativas.
+- Menus de campo simplificados para quatro ações principais.
+- Adicionado **Menu** único com Equipe, Bolsa, Pokédex, Diário, Mapa, Save, Config e Box quando disponível.
+- Adicionada introdução jogável com quarto, mãe, cidade, laboratório e Professor Aroeira antes da escolha do inicial.
+- Adicionada representação visual do mundo com sprites CSS, cenário de quarto/lab/cidade/rota/floresta/caverna/lago e Pokémon selvagem no mapa.
+- Rotas, floresta, caverna e lago agora têm progresso por passos antes de liberar a saída seguinte.
+- Exploração menos instantânea: avançar pode gerar treinador, item, encontro ou passo vazio.
+- Batalha reformulada com HUD mais próximo dos jogos: nome, level, slots de Poké Bola, barra de HP, número de HP e barra de EXP.
+- Pokédex agora abre detalhes do Pokémon visto, mostrando tipo, locais e golpes aprendidos.
+- Tela da equipe agora mostra sprite, HP, EXP, stats e golpes em cards.
+- Adicionadas animações simples de caminhar, Pokémon parado, flash de dano, captura e transições de barra.
 
 ## Log v1.2.4
 

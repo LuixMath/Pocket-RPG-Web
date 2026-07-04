@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="description" content="RPG textual retrô feito por Luiz Matheus / Luix Studios. Versão mobile com PWA, save, captura, batalhas e história própria." />
+  <meta name="description" content="RPG retrô textual/visual feito por Luiz Matheus / Luix Studios. Versão mobile PWA com introdução, exploração por passos, captura, batalhas e save." />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Pokémon Veyra" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="format-detection" content="telephone=no" />
   <meta name="theme-color" content="#8cad28" />
-  <title>Pokémon Veyra RPG v1.2.4</title>
+  <title>Pokémon Veyra RPG v1.3</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png" />
@@ -22,7 +22,7 @@
   <main id="app" class="app-shell" data-screen="menu">
     <section id="menuScreen" class="screen screen-menu">
       <div class="gbc-card title-card">
-        <p class="eyebrow">RPG textual retrô • v1.2.4</p>
+        <p class="eyebrow">RPG retrô • v1.3</p>
         <h1>Pokémon Veyra</h1>
         <p class="subtitle">Uma aventura costeira fan-made feita por Luiz Matheus.</p>
         <div class="pixel-stars" aria-hidden="true"></div>
@@ -57,6 +57,7 @@
         <section class="stage gbc-panel">
           <div id="locationBackdrop" class="location-backdrop town">
             <div class="scanlines" aria-hidden="true"></div>
+            <div id="pixelScene" class="pixel-scene" aria-hidden="true"></div>
             <div class="cloud c1" aria-hidden="true"></div>
             <div class="cloud c2" aria-hidden="true"></div>
             <div class="route-ground" aria-hidden="true"></div>
@@ -126,10 +127,10 @@
       </div>
 
       <nav class="mobile-dock" aria-label="Atalhos do jogo">
+        <button id="dockMenuBtn" class="dock-btn" type="button">Menu</button>
+        <button id="dockPartyBtn" class="dock-btn" type="button">Equipe</button>
         <button id="dockMapBtn" class="dock-btn" type="button">Mapa</button>
-        <button id="dockJournalBtn" class="dock-btn" type="button">Diário</button>
-        <button id="dockBagBtn" class="dock-btn" type="button">Bolsa</button>
-        <button id="dockDexBtn" class="dock-btn" type="button">Dex</button>
+        <button id="dockSaveBtn" class="dock-btn" type="button">Salvar</button>
       </nav>
     </section>
   </main>
