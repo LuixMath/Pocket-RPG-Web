@@ -2,9 +2,16 @@
    Projeto fã não comercial. Pokémon e marcas pertencem à Nintendo, The Pokémon Company e GAME FREAK. */
 
 const SPRITE_ROOT = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites';
+const SHOWDOWN_ROOT = 'https://play.pokemonshowdown.com/sprites';
 const crystalSprite = id => `${SPRITE_ROOT}/pokemon/versions/generation-ii/crystal/${id}.png`;
+const crystalBackSprite = id => `${SPRITE_ROOT}/pokemon/versions/generation-ii/crystal/back/${id}.png`;
 const defaultSprite = id => `${SPRITE_ROOT}/pokemon/${id}.png`;
 const itemSprite = slug => `${SPRITE_ROOT}/items/${slug}.png`;
+const trainerSprite = slug => `${SHOWDOWN_ROOT}/trainers/${slug}.png`;
+const showdownPokemonSprite = slug => `${SHOWDOWN_ROOT}/gen2/${slug}.png`;
+const showdownPokemonBackSprite = slug => `${SHOWDOWN_ROOT}/gen2-back/${slug}.png`;
+const typeIcon = type => `${SHOWDOWN_ROOT}/types/${type}.png`;
+
 
 const TYPES = {
   normal: { label: 'Normal', color: '#b8b8a8' }, fire: { label: 'Fogo', color: '#f08030' }, water: { label: 'Água', color: '#6890f0' },
@@ -204,7 +211,7 @@ TTTTTTTTTTTTTTTTTTTTTTTT`),
     signs: [{x:4,y:1,text:'Pesquisas de campo: maré, neblina e adaptação de espécies.'}]
   },
   route1: {
-    name: 'Rota 01', type:'route', music:'route', spawn:{x:9,y:1}, minSteps:18,
+    name: 'Rota 01', type:'route', music:'route', spawn:{x:9,y:1}, minSteps:34,
     rows: mapRows(`
 TTTTTTTTTppTTTTTTTTTTTT
 T,,,,,,,,pp,,,,,,,,,,,,T
@@ -234,7 +241,7 @@ TTTTTTTppTTTTppTTTTTTTT`),
     signs: [{x:12,y:14,text:'Rota 01 — Cove ao norte, Bosque Baixo ao sul.'}]
   },
   forest: {
-    name:'Bosque Baixo', type:'forest', music:'forest', spawn:{x:7,y:1}, minSteps:25,
+    name:'Bosque Baixo', type:'forest', music:'forest', spawn:{x:7,y:1}, minSteps:42,
     rows: mapRows(`
 TTTTTTTppTTTTTTTTTTTTTT
 TggggggppgggggggggggggT
@@ -265,7 +272,7 @@ TTTTTTTTTTppTTTTTTTTTTT`),
     signs: [{x:12,y:18,text:'Bosque Baixo — saída para Gruta Nox.'}]
   },
   cave: {
-    name:'Gruta Nox', type:'cave', music:'cave', spawn:{x:5,y:1}, minSteps:30,
+    name:'Gruta Nox', type:'cave', music:'cave', spawn:{x:5,y:1}, minSteps:48,
     rows: mapRows(`
 oooooooooooooooooooo
 oxxxxppxxxxxxxxxxxo
@@ -289,7 +296,7 @@ oooooooooppoooooooo`),
     items: [{ id:'caveEscape', item:'escape', qty:1, x:16,y:13 }, { id:'caveAntidote', item:'antidote', qty:1, x:14,y:4 }]
   },
   coast: {
-    name:'Costa Nox', type:'coast', music:'coast', spawn:{x:8,y:1}, minSteps:22,
+    name:'Costa Nox', type:'coast', music:'coast', spawn:{x:8,y:1}, minSteps:38,
     rows: mapRows(`
 TTTTTTTTppTTTTTTTTTTTT
 T,,,,,,pp,,,,,,,,,,,,T
@@ -370,8 +377,19 @@ const STARTERS = [
 ];
 
 const TRAINER_LOOK = {
-  hero: { body:'#2f65ff', hair:'#263238', hat:'#e84242' }, npc:{ body:'#43a047', hair:'#5d4037' }, professor:{ body:'#f8f8f8', hair:'#8d6e63' },
-  mom:{ body:'#f06292', hair:'#5d4037' }, rival:{ body:'#f57c00', hair:'#263238' }, nurse:{ body:'#ef5350', hair:'#795548' }, shopkeeper:{ body:'#7e57c2', hair:'#263238' }
+  hero: { body:'#2f65ff', hair:'#263238', hat:'#e84242', sprite: trainerSprite('ethan-gen2') },
+  npc:{ body:'#43a047', hair:'#5d4037', sprite: trainerSprite('youngster-gen2') },
+  professor:{ body:'#f8f8f8', hair:'#8d6e63', sprite: trainerSprite('oak-gen2') },
+  mom:{ body:'#f06292', hair:'#5d4037', sprite: trainerSprite('beauty-gen2') },
+  rival:{ body:'#f57c00', hair:'#263238', sprite: trainerSprite('blue-gen2') },
+  nurse:{ body:'#ef5350', hair:'#795548', sprite: trainerSprite('nurse') },
+  shopkeeper:{ body:'#7e57c2', hair:'#263238', sprite: trainerSprite('clerk') }
 };
 
-window.VEYRA_DATA = { SPRITE_ROOT, crystalSprite, defaultSprite, itemSprite, TYPES, TYPE_CHART, MOVES, LEARNSETS, DEX, ITEMS, TILE, MAPS, STARTERS, TRAINER_LOOK };
+const ASSET_CREDITS = {
+  pokemon: 'PokeAPI/sprites — sprites de Pokémon e itens carregados via GitHub.',
+  trainers: 'Smogon / Pokémon Showdown sprites — retratos de treinadores/NPCs carregados remotamente; alguns sprites exigem crédito ao artista e não devem ser editados.',
+  note: 'Uso fã, gratuito e não comercial. Pokémon e marcas pertencem à Nintendo, The Pokémon Company, Creatures Inc. e GAME FREAK.'
+};
+
+window.VEYRA_DATA = { SPRITE_ROOT, SHOWDOWN_ROOT, crystalSprite, crystalBackSprite, defaultSprite, itemSprite, trainerSprite, showdownPokemonSprite, showdownPokemonBackSprite, typeIcon, TYPES, TYPE_CHART, MOVES, LEARNSETS, DEX, ITEMS, TILE, MAPS, STARTERS, TRAINER_LOOK, ASSET_CREDITS };

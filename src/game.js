@@ -1,6 +1,6 @@
 /* Pokémon Veyra v1.5 — top-down GBC-style RPG */
 (() => {
-  const { crystalSprite, defaultSprite, TYPES, TYPE_CHART, MOVES, LEARNSETS, DEX, ITEMS, TILE, MAPS, STARTERS, TRAINER_LOOK } = window.VEYRA_DATA;
+  const { crystalSprite, crystalBackSprite, defaultSprite, typeIcon, TYPES, TYPE_CHART, MOVES, LEARNSETS, DEX, ITEMS, TILE, MAPS, STARTERS, TRAINER_LOOK, ASSET_CREDITS } = window.VEYRA_DATA;
   const $ = sel => document.querySelector(sel);
   const $$ = sel => Array.from(document.querySelectorAll(sel));
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -14,10 +14,10 @@
   const VIEW_W = 240, VIEW_H = 160, TILE_SIZE = 16;
   canvas.width = VIEW_W; canvas.height = VIEW_H;
 
-  const SAVE_KEY = 'pokemon-veyra-save-v15';
-  const VERSION = '1.5.0';
+  const SAVE_KEY = 'pokemon-veyra-save-v16';
+  const VERSION = '1.6.0';
 
-  const defaultSettings = { music:true, sfx:true, volume:.45, motion:true, textSpeed:22, theme:'crystal' };
+  const defaultSettings = { music:true, sfx:true, volume:.24, motion:true, textSpeed:18, theme:'crystal', musicMode:'varied' };
   let state = null;
   let activeScreen = 'title';
   let menuOpen = false;
@@ -31,19 +31,21 @@
   let encounterCooldown = 0;
 
   class AudioEngine {
-    constructor(){ this.ctx=null; this.master=null; this.current=null; this.timer=null; this.step=0; }
+    constructor(){ this.ctx=null; this.master=null; this.musicGain=null; this.current=null; this.timer=null; this.step=0; }
     ensure(){
       if(this.ctx) return;
       const AC = window.AudioContext || window.webkitAudioContext;
       if(!AC) return;
       this.ctx = new AC();
       this.master = this.ctx.createGain();
+      this.musicGain = this.ctx.createGain();
       this.master.gain.value = state?.settings?.volume ?? defaultSettings.volume;
-      this.master.connect(this.ctx.destination);
+      this.musicGain.gain.value = .55;
+      this.musicGain.connect(this.master); this.master.connect(this.ctx.destination);
     }
     setVolume(v){ if(this.master) this.master.gain.value = v; }
     tone(freq, dur=.09, type='square', gain=.05){
-      if(!state?.settings?.sfx && type !== 'triangle') return;
+      if(!state?.settings?.sfx) return;
       this.ensure(); if(!this.ctx) return;
       const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
       o.type = type; o.frequency.value = freq;
@@ -53,43 +55,51 @@
     sfx(name){
       if(!state?.settings?.sfx) return;
       const pack = {
-        click:[420,520], step:[160], bump:[90,70], heal:[520,660,780], hit:[110,90], dmg:[180,120], catch:[420,520,620], fail:[220,180,130], win:[660,880,990], lose:[200,160,120], level:[520,660,880,1040], start:[120,180,260,360]
-      }[name] || [440];
-      pack.forEach((n,i)=>setTimeout(()=>this.tone(n,.07,'square',.035),i*55));
+        click:[[420,.04],[640,.04]], step:[[126,.025]], bump:[[80,.06],[60,.08]], heal:[[520,.05],[660,.05],[820,.08]],
+        hit:[[140,.04],[92,.08]], dmg:[[180,.04],[120,.06]], catch:[[420,.05],[520,.05],[620,.07]], fail:[[220,.04],[180,.04],[130,.08]],
+        win:[[660,.06],[880,.06],[990,.12]], lose:[[200,.08],[160,.1],[120,.14]], level:[[520,.05],[660,.05],[880,.05],[1040,.12]],
+        start:[[120,.05],[180,.05],[260,.05],[360,.09]]
+      }[name] || [[440,.06]];
+      pack.forEach(([n,d],i)=>setTimeout(()=>this.tone(n,d,'square',.032),i*58));
     }
     play(track){
       if(!state?.settings?.music) return;
       this.ensure(); if(!this.ctx) return;
       if(this.current === track && this.timer) return;
       this.stop(); this.current = track; this.step = 0;
-      const patterns = {
-        menu:[392,0,392,523,494,0,440,392,330,0,392,440,523,0,494,392],
-        home:[262,330,392,0,330,392,523,0,392,330,294,0,330,392,330,0],
-        lab:[330,370,392,494,392,370,330,0,294,330,370,392,494,0,392,330],
-        cove:[392,440,494,0,523,494,440,392,330,392,440,0,494,440,392,330],
-        route:[523,587,659,0,587,523,494,440,392,440,494,0,523,494,440,392],
-        forest:[330,392,330,294,262,0,294,330,392,440,392,330,294,0,262,0],
-        cave:[196,0,220,0,247,0,220,196,185,0,196,0,220,247,220,0],
-        coast:[440,494,523,587,659,0,587,523,494,0,523,587,659,784,659,0],
-        noxport:[392,494,587,0,659,587,494,392,440,523,659,0,587,523,494,0],
-        gym:[220,247,262,294,330,0,330,294,262,0,247,220,196,220,247,0],
-        battle:[196,262,330,392,330,262,196,0,220,294,349,440,349,294,220,0]
+      const N = {c3:131,d3:147,e3:165,f3:175,g3:196,a3:220,b3:247,c4:262,d4:294,e4:330,f4:349,g4:392,a4:440,b4:494,c5:523,d5:587,e5:659,f5:698,g5:784,a5:880};
+      const themes = {
+        menu:{tempo:340, wave:'square', bass:[N.c3,N.g3,N.a3,N.g3], notes:[N.e4,0,N.g4,N.c5,0,N.b4,N.a4,0,N.g4,N.e4,0,N.d4,N.e4,N.g4,0,N.c5]},
+        home:{tempo:420, wave:'triangle', bass:[N.c3,N.g3,N.f3,N.g3], notes:[N.e4,0,N.g4,0,N.c5,0,N.g4,0,N.f4,0,N.e4,0,N.d4,0,N.c4,0]},
+        lab:{tempo:300, wave:'square', bass:[N.e3,N.g3,N.d3,N.a3], notes:[N.e4,N.g4,N.b4,0,N.a4,N.g4,0,N.e4,N.d4,N.f4,N.a4,0,N.g4,N.f4,N.e4,0]},
+        cove:{tempo:360, wave:'square', bass:[N.g3,N.d3,N.e3,N.c3], notes:[N.g4,N.a4,N.b4,0,N.d5,N.b4,N.a4,0,N.g4,0,N.e4,N.g4,N.a4,0,N.g4,0]},
+        route:{tempo:280, wave:'square', bass:[N.c3,N.g3,N.a3,N.f3], notes:[N.c5,N.d5,N.e5,0,N.d5,N.c5,N.a4,0,N.g4,N.a4,N.c5,0,N.d5,N.c5,N.a4,0]},
+        forest:{tempo:390, wave:'triangle', bass:[N.a3,N.e3,N.f3,N.e3], notes:[N.e4,0,N.a4,0,N.g4,0,N.e4,0,N.d4,N.e4,0,N.g4,0,N.a4,0,N.e4]},
+        cave:{tempo:470, wave:'sine', bass:[N.c3,0,N.d3,0], notes:[N.g3,0,N.a3,0,N.c4,0,N.a3,0,N.f3,0,N.g3,0,N.d3,0,0,0]},
+        coast:{tempo:330, wave:'triangle', bass:[N.f3,N.c3,N.g3,N.c3], notes:[N.a4,N.c5,N.d5,0,N.e5,0,N.d5,N.c5,N.a4,0,N.g4,N.a4,N.c5,0,N.a4,0]},
+        noxport:{tempo:310, wave:'square', bass:[N.d3,N.a3,N.g3,N.a3], notes:[N.d4,N.f4,N.a4,0,N.c5,N.a4,N.f4,0,N.g4,N.b4,N.d5,0,N.c5,N.b4,N.a4,0]},
+        gym:{tempo:250, wave:'square', bass:[N.d3,N.d3,N.f3,N.a3], notes:[N.d4,N.f4,N.a4,N.d5,0,N.a4,N.f4,0,N.e4,N.g4,N.b4,N.e5,0,N.b4,N.g4,0]},
+        battle:{tempo:180, wave:'square', bass:[N.c3,N.c3,N.g3,N.c3], notes:[N.c4,N.g4,N.c5,N.g4,N.d4,N.a4,N.d5,N.a4,N.e4,N.b4,N.e5,N.b4,N.f4,N.c5,N.f5,N.c5]}
       };
-      const notes = patterns[track] || patterns.route;
+      const t = themes[track] || themes.route;
       this.timer = setInterval(()=>{
         if(!state.settings.music) return;
-        const n = notes[this.step % notes.length];
-        if(n) this.musicTone(n, .15, .025);
-        if(this.step % 4 === 0) this.musicTone(n/2 || 110, .12, .014, 'triangle');
+        const i = this.step % t.notes.length;
+        const n = t.notes[i];
+        if(n) this.musicTone(n, track==='battle'? .09 : .16, track==='battle'? .018 : .012, t.wave);
+        if(i % 4 === 0){ const b=t.bass[(this.step/4|0)%t.bass.length]; if(b) this.musicTone(b, .18, .009, 'triangle'); }
+        if(track==='battle' && i % 8 === 0) this.musicTone(70,.035,.012,'square');
         this.step++;
-      }, 210);
+      }, t.tempo);
     }
-    musicTone(freq, dur=.12, gain=.02, type='square'){
+    musicTone(freq, dur=.12, gain=.012, type='square'){
       this.ensure(); if(!this.ctx) return;
       const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
       o.type = type; o.frequency.value = freq;
-      g.gain.value = gain; g.gain.linearRampToValueAtTime(0, this.ctx.currentTime + dur);
-      o.connect(g); g.connect(this.master); o.start(); o.stop(this.ctx.currentTime + dur);
+      g.gain.setValueAtTime(0, this.ctx.currentTime);
+      g.gain.linearRampToValueAtTime(gain, this.ctx.currentTime + .015);
+      g.gain.exponentialRampToValueAtTime(.0001, this.ctx.currentTime + dur);
+      o.connect(g); g.connect(this.musicGain || this.master); o.start(); o.stop(this.ctx.currentTime + dur + .02);
     }
     stop(){ if(this.timer) clearInterval(this.timer); this.timer=null; this.current=null; }
   }
@@ -180,10 +190,11 @@
     showScreen('cinematic');
     audio.play('lab');
     await cinematic([
-      ['professor','Este é o mundo dos Pokémon.'],
-      ['professor','Na Região Veyra, a maré muda caminhos. A neblina muda escolhas.'],
-      ['professor','Um treinador bom não anda rápido. Ele observa.'],
-      ['black','Naquela manhã, uma luz bateu na janela do seu quarto...']
+      ['professor','Olá. Sou Aroeira. Eu estudo rotas que mudam com a maré e Pokémon que aparecem só quando o clima vira.'],
+      ['professor','Treinadores apressados passam reto por itens, atalhos e encontros raros. Os bons observam o mapa.'],
+      ['professor','Hoje você vai sair de Cove pela primeira vez. Antes disso, escolha bem seu parceiro.'],
+      ['black','Um bipe antigo toca no quarto. A tela do relógio pisca 07:10.'],
+      ['black','Você acorda com o som distante de Wingull e passos no laboratório ao leste.']
     ]);
     state.flags.introDone = true; state.flags.woke = true;
     showGame();
@@ -194,12 +205,15 @@
     const box = $('#cinematicBox');
     for(const [who,text] of lines){
       box.dataset.who = who;
-      box.innerHTML = `<div class="cinematic-portrait ${who}"></div><p></p>`;
+      box.innerHTML = `<div class="cinematic-portrait ${who}">${trainerPortraitHtml(who)}</div><p></p>`;
       await typeInto(box.querySelector('p'), text, state?.settings?.textSpeed ?? 22);
       await waitForTap(box);
     }
   }
   function waitForTap(node){ return new Promise(resolve => { const done=()=>{ node.removeEventListener('click', done); window.removeEventListener('keydown', done); resolve(); }; node.addEventListener('click', done); window.addEventListener('keydown', done, {once:true}); }); }
+  function trainerPortraitHtml(who){ const role = who==='professor'?'professor':who==='black'?'':who; const src = role && TRAINER_LOOK[role]?.sprite; return src ? `<img src="${src}" alt=""/>` : ''; }
+  function rolePortrait(role){ return TRAINER_LOOK[role]?.sprite || TRAINER_LOOK.npc.sprite; }
+
   function typeInto(el, text, speed=22){
     if(!state?.settings?.motion){ el.textContent = text; return Promise.resolve(); }
     return new Promise(resolve=>{ let i=0; const tick=()=>{ el.textContent = text.slice(0,i++); if(i<=text.length) setTimeout(tick, speed); else resolve(); }; tick(); });
@@ -311,15 +325,34 @@
   }
   function drawPerson(x,y,role,face='down',hero=false){
     const p = TRAINER_LOOK[role] || TRAINER_LOOK.npc;
-    const bob = hero && state.settings.motion ? Math.sin(Date.now()/160)*1 : 0;
-    y += bob;
-    ctx.fillStyle='rgba(0,0,0,.22)'; ctx.fillRect(x+3,y+14,10,2);
-    ctx.fillStyle=p.hair; ctx.fillRect(x+4,y+1,8,4);
-    if(role==='hero'){ ctx.fillStyle=p.hat; ctx.fillRect(x+3,y,10,3); }
-    ctx.fillStyle='#f1c9a5'; ctx.fillRect(x+5,y+4,6,4);
-    ctx.fillStyle=p.body; ctx.fillRect(x+4,y+8,8,5);
-    ctx.fillStyle='#263238'; ctx.fillRect(x+4,y+13,3,3); ctx.fillRect(x+9,y+13,3,3);
-    if(face==='left'){ ctx.fillStyle='#111'; ctx.fillRect(x+5,y+5,1,1); } else if(face==='right'){ ctx.fillStyle='#111'; ctx.fillRect(x+10,y+5,1,1); } else { ctx.fillStyle='#111'; ctx.fillRect(x+6,y+5,1,1); ctx.fillRect(x+9,y+5,1,1); }
+    const bob = hero && state.settings.motion ? Math.sin(Date.now()/110) * 1.1 : 0;
+    const px = Math.round(x), py = Math.round(y + bob);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(px+3,py+13,10,2);
+    // legs with tiny walking frame
+    const step = hero ? ((state.steps % 2) ? 1 : 0) : 0;
+    ctx.fillStyle = '#263238';
+    ctx.fillRect(px+4,py+11,3,4+step); ctx.fillRect(px+9,py+11+step,3,4-step);
+    // body outline + body
+    ctx.fillStyle = '#101828'; ctx.fillRect(px+3,py+5,10,8);
+    ctx.fillStyle = p.body; ctx.fillRect(px+4,py+6,8,6); ctx.fillRect(px+5,py+12,6,2);
+    // face/head
+    ctx.fillStyle = '#101828'; ctx.fillRect(px+4,py+1,8,6);
+    ctx.fillStyle = '#f2c39b'; ctx.fillRect(px+5,py+2,6,5);
+    // hair/hat
+    ctx.fillStyle = p.hat || p.hair; ctx.fillRect(px+4,py,8,3); if(p.hat) ctx.fillRect(px+9,py+2,4,2);
+    ctx.fillStyle = p.hair; if(!p.hat) ctx.fillRect(px+4,py+1,2,4);
+    // facing indicator
+    ctx.fillStyle = '#101828';
+    if(face==='left') ctx.fillRect(px+4,py+4,1,1);
+    else if(face==='right') ctx.fillRect(px+11,py+4,1,1);
+    else if(face==='up') ctx.fillRect(px+6,py+1,4,1);
+    else { ctx.fillRect(px+6,py+4,1,1); ctx.fillRect(px+10,py+4,1,1); }
+    if(role==='professor'){ ctx.fillStyle='#fff'; ctx.fillRect(px+3,py+7,10,5); }
+    if(role==='nurse'){ ctx.fillStyle='#fff'; ctx.fillRect(px+5,py+1,6,2); ctx.fillStyle='#ef5350'; ctx.fillRect(px+7,py+1,2,2); }
+    ctx.restore();
   }
   function drawItem(x,y){
     ctx.fillStyle='rgba(0,0,0,.20)'; ctx.fillRect(x+4,y+12,8,3);
@@ -412,9 +445,9 @@
   function closeMenu(){ menuOpen=false; $('#menu').classList.remove('open'); }
   function renderMenu(){
     $('#menu').innerHTML = `<div class="menu-card">
-      <header><b>Menu</b><button id="closeMenu">×</button></header>
+      <header><span class="menu-avatar"><img src="${rolePortrait('hero')}" alt=""></span><b>Menu</b><button id="closeMenu">×</button></header>
       <nav class="menu-nav">
-        ${buttonTab('party','● Equipe')}${buttonTab('bag','▣ Bolsa')}${buttonTab('dex','◇ Dex')}${buttonTab('quest','★ Jornada')}${buttonTab('settings','⚙ Config')}${buttonTab('terms','© Termos')}
+        ${buttonTab('party','👥 Equipe')}${buttonTab('bag','🎒 Bolsa')}${buttonTab('dex','📘 Dex')}${buttonTab('quest','⭐ Jornada')}${buttonTab('settings','⚙ Config')}${buttonTab('terms','© Termos')}
       </nav>
       <section id="menuBody"></section>
     </div>`;
@@ -448,7 +481,7 @@
     return `<div class="bag-grid">${entries.length?entries.map(([id,qty])=>bagItem(id,qty)).join(''):'<p class="empty">Bolsa vazia.</p>'}</div>
       <h3>Itens-chave</h3><div class="key-grid">${keys.length?keys.map(id=>bagItem(id,'')).join(''):'<p class="empty">Nenhum item-chave.</p>'}</div>`;
   }
-  function bagItem(id,qty){ const it=ITEMS[id]; return `<article class="bag-item"><img src="${it.icon}"/><b>${it.name}</b><small>${it.desc}</small><span>${qty?`×${qty}`:''}</span></article>`; }
+  function bagItem(id,qty){ const it=ITEMS[id]; const usable = qty && (it.heal || it.cure || it.repel || it.escape); return `<article class="bag-item"><img src="${it.icon}"/><b>${it.name}</b><small>${it.desc}</small><span>${qty?`×${qty}`:''}</span>${usable?`<button data-use-bag="${id}">Usar</button>`:''}</article>`; }
   function renderDex(){
     const mons = Object.keys(DEX).filter(k => state.seen[k] || state.caught[k] || ['bulbasaur','charmander','squirtle'].includes(k));
     return `<div class="dex-grid">${mons.map(k=>{ const d=DEX[k], seen=state.seen[k]||state.caught[k], caught=state.caught[k]; return `<button class="dex-card ${caught?'caught':seen?'seen':'unknown'}" data-dex="${k}"><img src="${seen?crystalSprite(d.id):''}" onerror="this.src='${defaultSprite(d.id)}'"><b>${seen?d.name:'????'}</b><small>${caught?'Capturado':seen?'Visto':'Desconhecido'}</small></button>`; }).join('')}</div>`;
@@ -466,18 +499,35 @@
   }
   function toggle(id,label){ return `<label class="switch"><span>${label}</span><input data-setting="${id}" type="checkbox" ${state.settings[id]?'checked':''}></label>`; }
   function renderTermsHtml(){
-    return `<div class="terms"><h3>Termos de uso</h3><p>Projeto fã, individual, gratuito e não comercial, feito para estudo e portfólio.</p><p>Pokémon, nomes, sprites de Pokémon, itens, marcas e elementos relacionados pertencem aos seus respectivos proprietários: Nintendo, The Pokémon Company, Creatures Inc. e GAME FREAK.</p><p>Este projeto não é afiliado, endossado ou aprovado por essas empresas.</p><p>Sprites de Pokémon e itens são carregados do repositório público PokeAPI/sprites. Mapas, tiles, NPCs e interface desta versão são recriações autorais em pixel art para evitar redistribuição de material ripado de ROM.</p></div>`;
+    return `<div class="terms"><h3>Termos e créditos</h3><p>Projeto fã, individual, gratuito e não comercial, feito por Luiz Matheus / Luix Studios para estudo e portfólio.</p><p>Pokémon, nomes, sprites, itens, marcas e elementos relacionados pertencem à Nintendo, The Pokémon Company, Creatures Inc. e GAME FREAK. Este projeto não é afiliado, aprovado ou endossado por essas empresas.</p><p>${ASSET_CREDITS.pokemon}</p><p>${ASSET_CREDITS.trainers}</p><p>Mapas, UI, lógica, progressão e estrutura do jogo foram montados para este projeto.</p></div>`;
   }
   function bindMenuActions(){
     $('#saveBtn') && ($('#saveBtn').onclick = save);
     $('#eraseBtn') && ($('#eraseBtn').onclick = async()=>{ if(confirm('Apagar o save local?')) eraseSave(); });
     $$('#menuBody [data-summary]').forEach(btn=>btn.onclick=()=>showSummary(+btn.dataset.summary));
     $$('#menuBody [data-dex]').forEach(btn=>btn.onclick=()=>showDexDetail(btn.dataset.dex));
+    $$('#menuBody [data-use-bag]').forEach(btn=>btn.onclick=()=>useItemFromMenu(btn.dataset.useBag));
     $$('#menuBody [data-setting]').forEach(inp=>inp.onchange=()=>{ state.settings[inp.dataset.setting]=inp.checked; if(inp.dataset.setting==='music') inp.checked?startMapMusic():audio.stop(); saveSilent(); });
     $('#volumeInput') && ($('#volumeInput').oninput=e=>{ state.settings.volume=+e.target.value; audio.setVolume(state.settings.volume); saveSilent(); });
     $('#textSpeed') && ($('#textSpeed').value = String(state.settings.textSpeed));
     $('#textSpeed') && ($('#textSpeed').onchange=e=>{ state.settings.textSpeed=+e.target.value; saveSilent(); });
   }
+  async function useItemFromMenu(id){
+    const it = ITEMS[id]; if(!it) return;
+    if(it.heal || it.cure){
+      const m = activeMon(); if(!m){ toast('Nenhum Pokémon na equipe.'); return; }
+      if(it.heal){ if(m.hp>=m.maxHp){ toast('HP já está cheio.'); return; } if(!takeItem(id,1)) return; m.hp=clamp(m.hp+it.heal,0,m.maxHp); audio.sfx('heal'); toast(`${m.name} recuperou HP.`); }
+      if(it.cure){ if(m.status!==it.cure){ toast('Não teve efeito.'); return; } if(!takeItem(id,1)) return; m.status=null; audio.sfx('heal'); toast(`${m.name} foi curado.`); }
+      updateHud(); renderMenu(); saveSilent(); return;
+    }
+    if(it.repel){ if(!takeItem(id,1)) return; state.repel += it.repel; audio.sfx('click'); toast('Repelente ativado.'); renderMenu(); saveSilent(); return; }
+    if(it.escape){
+      if(!['cave'].includes(currentMap().type)){ toast('Não dá para usar aqui.'); return; }
+      if(!takeItem(id,1)) return; state.map='noxport'; state.x=8; state.y=8; audio.sfx('click'); closeMenu(); showGame(); saveSilent(); return;
+    }
+    toast('Esse item não pode ser usado agora.');
+  }
+
   function showSummary(i){
     const m=state.party[i];
     $('#modal').classList.add('open');
@@ -518,7 +568,7 @@
     const p=battle.player, e=battle.enemy;
     $('#battleScreen').innerHTML = `<div class="battle-stage ${battle.type}">
       <div class="enemy-box combatant"><div class="nameplate"><b>${e.name}</b><span>Lv.${e.level}</span></div><div class="hp enemy-hp"><i style="width:${hpPct(e)}%"></i></div><img class="mon-sprite enemy-sprite" src="${crystalSprite(DEX[e.mon].id)}" onerror="this.src='${defaultSprite(DEX[e.mon].id)}'"></div>
-      <div class="player-box combatant"><img class="mon-sprite player-sprite" src="${crystalSprite(DEX[p.mon].id)}" onerror="this.src='${defaultSprite(DEX[p.mon].id)}'"><div class="player-panel"><div class="nameplate"><b>${p.name}</b><span>Lv.${p.level}</span></div><div class="hp player-hp"><i style="width:${hpPct(p)}%"></i></div><small>${p.hp}/${p.maxHp} HP</small><div class="xp"><i style="width:${clamp((p.exp/p.next)*100,0,100)}%"></i></div><div class="balls">${state.party.map(m=>`<span class="mini-ball ${m.hp<=0?'fainted':''}"></span>`).join('')}</div></div></div>
+      <div class="player-box combatant"><img class="mon-sprite player-sprite" src="${crystalBackSprite(DEX[p.mon].id)}" onerror="this.src='${crystalSprite(DEX[p.mon].id)}'"><div class="player-panel"><div class="nameplate"><b>${p.name}</b><span>Lv.${p.level}</span></div><div class="hp player-hp"><i style="width:${hpPct(p)}%"></i></div><small>${p.hp}/${p.maxHp} HP</small><div class="xp"><i style="width:${clamp((p.exp/p.next)*100,0,100)}%"></i></div><div class="balls">${state.party.map(m=>`<span class="mini-ball ${m.hp<=0?'fainted':''}"></span>`).join('')}</div></div></div>
       <div class="battle-dialog"><p id="battleText">${lastBattleText()}</p><div id="battleActions">${battleActions(mode)}</div></div>
     </div>`;
     bindBattleButtons(mode);
@@ -526,7 +576,7 @@
   function hpPct(m){ return clamp((m.hp/m.maxHp)*100,0,100); }
   function lastBattleText(){ if(!battle.log.length) return battle.type==='wild'?`Um ${battle.enemy.name} selvagem apareceu!`:`${battle.trainer.name} enviou ${battle.enemy.name}!`; return battle.log[battle.log.length-1]; }
   function battleActions(mode){
-    if(mode==='moves') return `<div class="move-buttons">${battle.player.moves.map((m,i)=>`<button data-move="${i}" ${m.pp<=0?'disabled':''}><b>${MOVES[m.id].name}</b><small>${TYPES[MOVES[m.id].type].label} · ${m.pp}/${MOVES[m.id].pp}</small></button>`).join('')}<button data-back>Voltar</button></div>`;
+    if(mode==='moves') return `<div class="move-buttons">${battle.player.moves.map((m,i)=>`<button data-move="${i}" ${m.pp<=0?'disabled':''}><b>${MOVES[m.id].name}</b><small><img class="type-icon" src="${typeIcon(MOVES[m.id].type)}" onerror="this.remove()"> ${TYPES[MOVES[m.id].type].label} · ${m.pp}/${MOVES[m.id].pp}</small></button>`).join('')}<button data-back>Voltar</button></div>`;
     if(mode==='bag') return `<div class="item-buttons">${['pokeball','greatball','potion','superpotion','antidote','burnheal'].filter(id=>state.bag[id]).map(id=>`<button data-use="${id}"><img src="${ITEMS[id].icon}">${ITEMS[id].name} ×${state.bag[id]}</button>`).join('') || '<button disabled>Bolsa vazia</button>'}<button data-back>Voltar</button></div>`;
     if(mode==='switch') return `<div class="switch-buttons">${state.party.map((m,i)=>`<button data-switch="${i}" ${m.hp<=0 || m.uid===battle.player.uid?'disabled':''}><img src="${crystalSprite(DEX[m.mon].id)}">${m.name} Lv.${m.level}</button>`).join('')}<button data-back>Voltar</button></div>`;
     return `<button data-mode="moves">⚔ Lutar</button><button data-mode="bag">▣ Bolsa</button><button data-mode="switch">● Pokémon</button><button data-run>↙ Fugir</button>`;

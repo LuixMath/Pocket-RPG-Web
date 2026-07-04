@@ -1,9 +1,11 @@
 # Créditos
 
-Desenvolvimento, interface, mapas, sistema de batalha, progressão e estrutura: **Luiz Matheus**.
+Desenvolvimento, UI, lógica, mapas, progressão e montagem do projeto: **Luiz Matheus / Luix Studios**.
 
 Sprites de Pokémon e itens: **PokeAPI/sprites**.
 
-Mapas, tiles, NPCs, música gerada por código e interface desta versão foram criados/recriados para este projeto e não usam arquivos ripados de ROMs.
+Retratos de treinadores/NPCs: **Smogon / Pokémon Showdown sprite repository**. Alguns sprites listados pelo repositório não são dos jogos e exigem crédito ao artista correspondente; não edite ou redistribua sem verificar permissões.
 
-Pokémon e propriedades relacionadas pertencem a Nintendo, The Pokémon Company, Creatures Inc. e GAME FREAK.
+Pokémon, nomes, sprites, itens, marcas e elementos relacionados pertencem à **Nintendo**, **The Pokémon Company**, **Creatures Inc.** e **GAME FREAK**.
+
+Este projeto é fã, gratuito, não comercial e criado apenas para estudo/portfólio.

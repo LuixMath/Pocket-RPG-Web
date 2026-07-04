@@ -18,7 +18,7 @@
       <div class="title-card">
         <p class="eyebrow">Luiz Matheus apresenta</p>
         <h1><span>Pokémon</span> Veyra</h1>
-        <p class="subtitle">Um RPG textual/top-down retrô feito para portfólio.</p>
+        <p class="subtitle">RPG retrô top-down com batalhas, captura e jornada própria.</p>
         <div class="fake-cartridge">
           <div class="cart-line"></div><div class="cart-screen">VY</div><div class="cart-pins"></div>
         </div>
@@ -44,22 +44,23 @@
           <div id="transition" class="transition"></div>
         </section>
         <div id="dialogue" class="dialogue"><p>Use o direcional. A: interagir. B: menu.</p></div>
-        <div class="quick-row">
-          <button id="quickParty"><span>●</span> Equipe</button>
-          <button id="quickBag"><span>▣</span> Bolsa</button>
-          <button id="quickDex"><span>◇</span> Dex</button>
-          <button id="menuBtn"><span>☰</span> Menu</button>
+        <div class="quick-row game-command-row">
+          <button id="quickParty"><span class="cmd-icon">👥</span> Equipe</button>
+          <button id="quickBag"><span class="cmd-icon">🎒</span> Bolsa</button>
+          <button id="quickDex"><span class="cmd-icon">📘</span> Dex</button>
+          <button id="menuBtn"><span class="cmd-icon">☰</span> Menu</button>
         </div>
-        <section class="controls" aria-label="Controles de jogo">
-          <div class="dpad">
-            <button data-dir="up">▲</button>
-            <button data-dir="left">◀</button>
-            <button data-dir="right">▶</button>
-            <button data-dir="down">▼</button>
+        <p class="control-help">Setas/WASD: mover · Z/Enter: falar · X/Esc: menu</p>
+        <section class="controls touch-controls" aria-label="Controles de jogo no celular">
+          <div class="dpad" aria-label="Direcional">
+            <button data-dir="up" aria-label="Mover para cima">▲</button>
+            <button data-dir="left" aria-label="Mover para esquerda">◀</button>
+            <button data-dir="right" aria-label="Mover para direita">▶</button>
+            <button data-dir="down" aria-label="Mover para baixo">▼</button>
           </div>
           <div class="ab-buttons">
-            <button id="aBtn">A</button>
-            <button id="bBtn">B</button>
+            <button id="aBtn"><small>Falar</small>A</button>
+            <button id="bBtn"><small>Menu</small>B</button>
           </div>
         </section>
       </div>

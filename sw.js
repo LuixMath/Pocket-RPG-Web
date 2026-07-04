@@ -1,4 +1,4 @@
-const CACHE = 'pokemon-veyra-v15';
+const CACHE = 'pokemon-veyra-v16';
 const ASSETS = [
   './', './index.html', './styles.css', './src/data.js', './src/game.js', './manifest.webmanifest',
   './assets/icons/icon-192.png', './assets/icons/icon-512.png', './assets/icons/apple-touch-icon.png', './assets/icons/maskable-512.png'
