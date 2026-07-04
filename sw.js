@@ -1,7 +1,9 @@
-const CACHE = 'pokemon-veyra-v16';
+const CACHE = 'pokemon-veyra-v17';
 const ASSETS = [
   './', './index.html', './styles.css', './src/data.js', './src/game.js', './manifest.webmanifest',
-  './assets/icons/icon-192.png', './assets/icons/icon-512.png', './assets/icons/apple-touch-icon.png', './assets/icons/maskable-512.png'
+  './assets/icons/icon-192.png', './assets/icons/icon-512.png', './assets/icons/apple-touch-icon.png', './assets/icons/maskable-512.png',
+  './assets/characters/hero.png', './assets/characters/npc.png', './assets/characters/professor.png', './assets/characters/mom.png', './assets/characters/rival.png', './assets/characters/nurse.png', './assets/characters/shopkeeper.png',
+  './assets/ui/party.png', './assets/ui/bag.png', './assets/ui/dex.png', './assets/ui/menu.png', './assets/ui/terms.png'
 ];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));

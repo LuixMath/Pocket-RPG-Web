@@ -4,20 +4,20 @@ RPG fã retrô/top-down criado por **Luiz Matheus / Luix Studios** em HTML, CSS 
 
 ## Versão
 
-**v1.6 — Crystal Premium Rework**
+**v1.7 — Premium Top-Down Update**
 
 ## Foco da versão
 
-- Visual top-down mantido, mas com acabamento visual inspirado na versão mais bonita anterior.
-- Interface com bordas, cores e painéis mais próximos de um RPG retrô de portátil.
-- Controles de desktop mais limpos; botões GBA só aparecem no toque/mobile.
-- Pokémon em sprites Crystal/Gen II.
-- Itens com sprites carregados de repositório público.
-- Retratos de treinadores/NPCs carregados remotamente de Pokémon Showdown quando online.
-- Música refeita com trilhas mais suaves e diferentes por área.
-- Rotas mais longas e menos instantâneas.
-- Bolsa com uso de poções, curas, repelente e corda de fuga fora da batalha.
-- Termos e créditos dentro do jogo, sem tutorial no README.
+- Interface refeita com acabamento mais premium: molduras, espaçamento, cores, botões e caixa de diálogo mais fortes.
+- Mapa top-down redesenhado com tiles mais detalhados, textura de grama, caminhos, casas, árvores, flores, placas e sombras.
+- Personagem principal agora usa sprite sheet local com animação de caminhada por direção.
+- NPCs receberam sprites locais em pixel art, com variações para mãe, professor, rival, enfermeira e lojista.
+- Botões principais agora usam ícones próprios em pixel art.
+- Movimento do personagem com transição curta entre tiles.
+- Música procedural refeita com temas mais longos e variação por área, sem usar músicas oficiais.
+- Introdução revisada para ter mais clima e menos sensação de texto genérico.
+- Mantém sprites Crystal/Gen II dos Pokémon via PokeAPI/sprites.
+- Mantém itens e ícones de tipo carregados de repositórios públicos quando online.
 
 ## Aviso
 

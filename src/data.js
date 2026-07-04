@@ -388,7 +388,7 @@ const TRAINER_LOOK = {
 
 const ASSET_CREDITS = {
   pokemon: 'PokeAPI/sprites — sprites de Pokémon e itens carregados via GitHub.',
-  trainers: 'Smogon / Pokémon Showdown sprites — retratos de treinadores/NPCs carregados remotamente; alguns sprites exigem crédito ao artista e não devem ser editados.',
+  trainers: 'Sprites locais de overworld criados para este projeto; retratos remotos auxiliares vêm do Pokémon Showdown quando online.',
   note: 'Uso fã, gratuito e não comercial. Pokémon e marcas pertencem à Nintendo, The Pokémon Company, Creatures Inc. e GAME FREAK.'
 };
 
