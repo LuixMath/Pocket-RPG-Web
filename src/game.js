@@ -1,10 +1,130 @@
 const SAVE_KEY = "pokemonVeyraRPG.save.v1";
-const SETTINGS_KEY = "pokemonVeyraRPG.settings.v1";
+const SETTINGS_KEY = "pokemonVeyraRPG.settings.v2";
 
 let state = null;
 let battle = null;
 let modalSelection = null;
 let deferredInstallPrompt = null;
+let musicTimer = null;
+let currentMusicMode = null;
+
+const AUDIO = {
+  ctx: null,
+  master: null,
+  music: null,
+  sfx: null,
+  unlocked: false,
+  ensure() {
+    if (this.ctx) return;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    this.ctx = new Ctx();
+    this.master = this.ctx.createGain();
+    this.music = this.ctx.createGain();
+    this.sfx = this.ctx.createGain();
+    this.music.connect(this.master);
+    this.sfx.connect(this.master);
+    this.master.connect(this.ctx.destination);
+    this.unlocked = true;
+    applyAudioSettings();
+  },
+  tone(freq, duration = .08, type = "square", target = "sfx", delay = 0, volume = .3) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime + delay;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, now);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(volume, now + .01);
+    gain.gain.exponentialRampToValueAtTime(.001, now + duration);
+    osc.connect(gain);
+    gain.connect(target === "music" ? this.music : this.sfx);
+    osc.start(now);
+    osc.stop(now + duration + .03);
+  },
+  noise(duration = .08, delay = 0, volume = .18) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime + delay;
+    const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * duration, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const src = this.ctx.createBufferSource();
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.exponentialRampToValueAtTime(.001, now + duration);
+    src.buffer = buffer; src.connect(gain); gain.connect(this.sfx); src.start(now); src.stop(now + duration);
+  }
+};
+
+function audioSettings() {
+  return state?.settings || loadSavedSettings();
+}
+
+function applyAudioSettings() {
+  if (!AUDIO.ctx || !AUDIO.master) return;
+  const settings = audioSettings();
+  const volume = clamp(Number(settings.volume ?? 70), 0, 100) / 100;
+  AUDIO.master.gain.value = volume;
+  AUDIO.music.gain.value = settings.music === false ? 0 : .18;
+  AUDIO.sfx.gain.value = settings.sfx === false ? 0 : .38;
+}
+
+function playSfx(name) {
+  const settings = audioSettings();
+  if (settings.sfx === false || !settings.motion && name === "step") return;
+  AUDIO.ensure();
+  if (!AUDIO.ctx) return;
+  const seq = {
+    tap: [[520,.035]],
+    step: [[260,.04],[330,.035,.045]],
+    open: [[420,.05],[640,.06,.055]],
+    battleStart: [[160,.08],[220,.08,.08],[330,.1,.16],[660,.12,.28]],
+    hit: [[110,.05],[90,.05,.045]],
+    heal: [[440,.06],[660,.08,.07]],
+    catch: [[520,.07],[620,.07,.1],[780,.16,.2]],
+    fail: [[220,.08],[180,.12,.09]],
+    faint: [[330,.08],[260,.08,.08],[180,.14,.16]],
+    win: [[523,.08],[659,.08,.09],[784,.16,.18]],
+    level: [[392,.07],[523,.07,.08],[659,.12,.16]]
+  }[name];
+  if (name === "hit") AUDIO.noise(.08, 0, .25);
+  if (seq) seq.forEach(([freq,dur,delay=0]) => AUDIO.tone(freq,dur,"square","sfx",delay,.28));
+}
+
+const MUSIC_PATTERNS = {
+  menu: [392,0,523,0,659,0,523,0],
+  overworld: [262,330,392,330,294,370,440,370],
+  battle: [220,247,262,330,294,262,247,220]
+};
+
+function startMusic(mode) {
+  const settings = audioSettings();
+  if (settings.music === false || settings.motion === false) return stopMusic();
+  AUDIO.ensure();
+  if (!AUDIO.ctx || currentMusicMode === mode) return;
+  stopMusic();
+  currentMusicMode = mode;
+  let i = 0;
+  const playNote = () => {
+    if (!AUDIO.ctx || audioSettings().music === false) return;
+    const pattern = MUSIC_PATTERNS[mode] || MUSIC_PATTERNS.overworld;
+    const note = pattern[i % pattern.length];
+    if (note) {
+      AUDIO.tone(note, .1, "square", "music", 0, .18);
+      AUDIO.tone(note / 2, .12, "triangle", "music", 0, .08);
+    }
+    i++;
+  };
+  playNote();
+  musicTimer = window.setInterval(playNote, mode === "battle" ? 170 : 310);
+}
+
+function stopMusic() {
+  if (musicTimer) window.clearInterval(musicTimer);
+  musicTimer = null;
+  currentMusicMode = null;
+}
 
 const $ = selector => document.querySelector(selector);
 const app = $("#app");
@@ -123,18 +243,28 @@ function saveGame(silent = false) {
   if (!silent) say("Jogo salvo.");
 }
 
+function defaultSettings() {
+  return { text: "normal", motion: true, theme: "crystal", music: true, sfx: true, volume: 70 };
+}
+
+function normalizeSettings(parsed = {}) {
+  return {
+    text: parsed.text === "fast" ? "fast" : "normal",
+    motion: parsed.motion !== false,
+    theme: parsed.theme === "night" ? "night" : "crystal",
+    music: parsed.music !== false,
+    sfx: parsed.sfx !== false,
+    volume: clamp(Number(parsed.volume ?? 70), 0, 100)
+  };
+}
+
 function loadSavedSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { text: "normal", motion: true, theme: "crystal" };
-    const parsed = JSON.parse(raw);
-    return {
-      text: parsed.text === "fast" ? "fast" : "normal",
-      motion: parsed.motion !== false,
-      theme: parsed.theme === "night" ? "night" : "crystal"
-    };
+    if (!raw) return defaultSettings();
+    return normalizeSettings(JSON.parse(raw));
   } catch {
-    return { text: "normal", motion: true, theme: "crystal" };
+    return defaultSettings();
   }
 }
 
@@ -165,7 +295,7 @@ function migrateSave(loaded) {
   loaded.flags ||= {};
   loaded.routeProgress ||= {};
   loaded.stats ||= { steps: 0, wins: 0, captures: 0, whites: 0 };
-  loaded.settings = { ...loadSavedSettings(), ...(loaded.settings || {}) };
+  loaded.settings = normalizeSettings({ ...loadSavedSettings(), ...(loaded.settings || {}) });
   loaded.player.party.forEach(mon => { mon.temp ||= { atk: 0, def: 0 }; mon.moves ||= movesFor(mon.id, mon.level); refreshMon(mon, true); });
   loaded.player.box.forEach(mon => { mon.temp ||= { atk: 0, def: 0 }; mon.moves ||= movesFor(mon.id, mon.level); refreshMon(mon, true); });
   return loaded;
@@ -175,17 +305,32 @@ function setScreen(screen) {
   app.dataset.screen = screen;
   menuScreen.hidden = screen !== "menu";
   gameScreen.hidden = screen !== "game";
+  if (screen === "menu" && !state) startMusic("menu");
 }
 
 function say(text) {
   mainText.textContent = text;
 }
 
+function iconForAction(label) {
+  const key = label.toLowerCase();
+  if (key.includes("lutar")) return "⚔";
+  if (key.includes("mochila") || key.includes("bolsa")) return "▣";
+  if (key.includes("pokémon") || key.includes("equipe")) return "●";
+  if (key.includes("fugir") || key.includes("voltar")) return "↩";
+  if (key.includes("avançar") || key.includes("viajar")) return "➜";
+  if (key.includes("procurar") || key.includes("explorar")) return "⌕";
+  if (key.includes("menu")) return "☰";
+  if (key.includes("conversar")) return "!";
+  if (key.includes("continuar")) return "▶";
+  return "◆";
+}
+
 function action(label, handler, hint = "") {
   const btn = document.createElement("button");
   btn.className = "action-btn";
   btn.type = "button";
-  btn.innerHTML = `${label}${hint ? `<small>${hint}</small>` : ""}`;
+  btn.innerHTML = `<span class="btn-icon">${iconForAction(label)}</span><span><b>${label}</b>${hint ? `<small>${hint}</small>` : ""}</span>`;
   btn.addEventListener("click", handler);
   actionGrid.appendChild(btn);
 }
@@ -195,6 +340,9 @@ function render() {
   document.body.classList.toggle("no-motion", !state.settings.motion);
   document.body.classList.toggle("night", state.settings.theme === "night");
   document.body.classList.toggle("fast-text", state.settings.text === "fast");
+  applyAudioSettings();
+  if (state.settings.music !== false) startMusic(battle ? "battle" : "overworld");
+  else stopMusic();
 
   const loc = LOCATIONS[state.player.location];
   $("#locationName").textContent = state.flags.introActive ? (INTRO_STEPS[state.flags.introStep]?.title || loc.name) : loc.name;
@@ -305,9 +453,9 @@ function routeProgressLabel(id = state.player.location) {
 function sceneFlash(kind = "step") {
   const stage = $("#locationBackdrop");
   if (!stage || !state?.settings?.motion) return;
-  stage.classList.remove("flash-step", "flash-hit", "flash-catch");
+  stage.classList.remove("flash-step", "flash-hit", "flash-catch", "flash-faint", "battle-wipe", "battle-ripple");
   void stage.offsetWidth;
-  stage.classList.add(kind === "hit" ? "flash-hit" : kind === "catch" ? "flash-catch" : "flash-step");
+  stage.classList.add(kind === "hit" ? "flash-hit" : kind === "catch" ? "flash-catch" : kind === "faint" ? "flash-faint" : kind === "ripple" ? "battle-ripple" : kind === "wipe" ? "battle-wipe" : "flash-step");
 }
 
 function spriteMonForLocation(loc) {
@@ -328,14 +476,25 @@ function renderOverworld() {
   const road = isRouteLike(loc) ? `<div class="route-meter"><i style="width:${pct(routeProgress(), loc.length)}%"></i><span>${progress}</span></div>` : "";
   const wild = wildId ? `<img class="scene-mon" src="${monFront(wildId)}" onerror="this.src='${monFallback(wildId)}'" alt="">` : "";
   const labBall = kind === "lab" ? `<div class="lab-balls"><span></span><span></span><span></span></div>` : "";
+  const npc = npcSpriteForScene(kind);
   scene.innerHTML = `
     <div class="tile-layer"></div>
     ${road}
-    <div class="sprite hero-sprite"><b></b></div>
-    <div class="sprite npc-sprite"><b></b></div>
+    <img class="overworld-sprite hero-sprite" src="assets/sprites/hero.gif" alt="">
+    <img class="overworld-sprite npc-sprite" src="${npc}" alt="">
     ${wild}
     ${labBall}
   `;
+}
+
+function npcSpriteForScene(kind) {
+  if (kind === "lab") return "assets/sprites/professor.png";
+  if (kind === "bedroom") return "assets/sprites/mom.png";
+  const loc = LOCATIONS[state.player.location];
+  if (loc?.services?.includes("center")) return "assets/sprites/nurse.png";
+  if (loc?.services?.includes("mart")) return "assets/sprites/shopkeeper.png";
+  if ((loc?.trainers || []).some(id => id.includes("niko") && !state.flags[TRAINERS[id].flag])) return "assets/sprites/rival.png";
+  return "assets/sprites/npc.png";
 }
 
 function talkToNpc() {
@@ -379,6 +538,7 @@ function renderActions() {
 }
 
 function openGameMenu() {
+  playSfx("open");
   const loc = LOCATIONS[state.player.location];
   const boxButton = loc.services?.includes("center") ? `<button class="choice-btn" value="box" type="submit"><strong>PC / Box</strong><small>${state.player.box.length} guardados</small></button>` : "";
   modalContent.innerHTML = `
@@ -412,6 +572,7 @@ function openGameMenu() {
 }
 
 function openLocalMenu() {
+  playSfx("open");
   const loc = LOCATIONS[state.player.location];
   const options = [];
   if (loc.services?.includes("home")) options.push(["home", "Casa", "curar equipe"]);
@@ -443,6 +604,7 @@ function openLocalMenu() {
 }
 
 function openTravelMenu() {
+  playSfx("open");
   const current = LOCATIONS[state.player.location];
   const canExitForward = routeIsComplete();
   const nodes = current.exits.map(id => {
@@ -507,11 +669,14 @@ function renderBattleActions() {
 
 function renderBattle() {
   const battleView = $("#battleView");
+  const stage = $("#locationBackdrop");
   if (!battle) {
     battleView.hidden = true;
+    stage?.classList.remove("in-battle");
     return;
   }
   battleView.hidden = false;
+  stage?.classList.add("in-battle");
   const ally = activeMon();
   const foe = enemyMon();
   $("#enemySprite").src = monFront(foe.id);
@@ -583,6 +748,7 @@ function travel(id) {
   if (isRouteLike(next)) state.routeProgress[id] = 0;
   state.stats.steps += 1;
   if (state.player.repelSteps > 0) state.player.repelSteps -= 1;
+  playSfx("step");
   sceneFlash("step");
   say(next.text);
   render();
@@ -600,6 +766,7 @@ function advanceRoute() {
   state.routeProgress[state.player.location] = routeProgress() + 1;
   state.stats.steps += 1;
   if (state.player.repelSteps > 0) state.player.repelSteps -= 1;
+  playSfx("step");
   sceneFlash("step");
 
   const undefeated = (loc.trainers || []).filter(id => !state.flags[TRAINERS[id].flag]);
@@ -676,10 +843,28 @@ function firstHealthyIndex() {
   return state.player.party.findIndex(mon => mon.hp > 0);
 }
 
+function animateBattleSprite(kind) {
+  if (!state?.settings?.motion) return;
+  const target = kind.startsWith("enemy") ? $("#enemySprite") : $("#playerSprite");
+  if (!target) return;
+  target.classList.remove("anim-attack", "anim-hit", "anim-faint", "anim-enter");
+  void target.offsetWidth;
+  if (kind.endsWith("Attack")) target.classList.add("anim-attack");
+  if (kind.endsWith("Hit")) target.classList.add("anim-hit");
+  if (kind.endsWith("Faint")) target.classList.add("anim-faint");
+  if (kind.endsWith("Enter")) target.classList.add("anim-enter");
+}
+
+function battleTransition(kind = "wild") {
+  playSfx("battleStart");
+  sceneFlash(kind === "trainer" || kind === "gym" ? "wipe" : "ripple");
+}
+
 function startWildBattle(id, level) {
   if (firstHealthyIndex() < 0) return whiteOut();
   const enemy = createMon(id, level);
   addSeen(id);
+  battleTransition("wild");
   battle = {
     kind: "wild",
     enemyTeam: [enemy], enemyIndex: 0,
@@ -723,6 +908,7 @@ function startTrainerBattle(trainerId) {
   if (firstHealthyIndex() < 0) return whiteOut();
   const enemyTeam = trainer.team.map(([id, level]) => createMon(id, level));
   enemyTeam.forEach(mon => addSeen(mon.id));
+  battleTransition(trainer.badge ? "gym" : "trainer");
   battle = {
     kind: trainer.badge ? "gym" : "trainer",
     trainerId,
@@ -851,7 +1037,12 @@ function useMove(attacker, defender, moveKey, enemySide) {
   const raw = (((2 * attacker.level / 5 + 2) * move.power * (attack / defense)) / 50 + 2) * stab * typeMult * random * crit;
   const damage = typeMult === 0 ? 0 : clamp(Math.floor(raw), 1, defender.hp);
   defender.hp = clamp(defender.hp - damage, 0, defender.maxHp);
-  if (damage > 0) sceneFlash("hit");
+  animateBattleSprite(enemySide ? "enemyAttack" : "playerAttack");
+  if (damage > 0) {
+    playSfx("hit");
+    animateBattleSprite(enemySide ? "playerHit" : "enemyHit");
+    sceneFlash("hit");
+  }
 
   let text = `${who} usou ${move.name}. Causou ${damage} de dano.`;
   if (crit > 1) text += " Golpe crítico.";
@@ -873,6 +1064,8 @@ function useMove(attacker, defender, moveKey, enemySide) {
 }
 
 function afterEnemyFainted(text) {
+  playSfx("faint");
+  animateBattleSprite("enemyFaint");
   const defeated = enemyMon();
   const gained = Math.floor((pokemonData(defeated.id).exp * defeated.level) / 7);
   text += gainExp(activeMon(), gained);
@@ -914,6 +1107,7 @@ function gainExp(mon, amount) {
 }
 
 function finishBattleWin(text) {
+  playSfx("win");
   if (battle.kind === "wild") {
     battle = null;
     state.stats.wins += 1;
@@ -940,6 +1134,9 @@ function finishBattleWin(text) {
 }
 
 function afterPlayerFainted(text) {
+  playSfx("faint");
+  sceneFlash("faint");
+  animateBattleSprite("playerFaint");
   const next = firstHealthyIndex();
   if (next >= 0) {
     battle.playerIndex = next;
@@ -987,11 +1184,13 @@ function useBattleItem(key) {
       if (sentToBox) state.player.box.push(caught);
       else state.player.party.push(caught);
       battle = null;
+      playSfx("catch");
       sceneFlash("catch");
       say(`${item.name} balançou... clicou!\n${foe.name} foi capturado.${sentToBox ? " Foi enviado para o Box." : ""}`);
       render();
       return;
     }
+    playSfx("fail");
     let text = `${item.name} balançou... ${foe.name} escapou.`;
     text += enemyTurn();
     finishRound(text);
@@ -1003,6 +1202,7 @@ function useBattleItem(key) {
       const mon = state.player.party[idx];
       state.player.bag[key] -= 1;
       mon.hp = clamp(mon.hp + item.amount, 0, mon.maxHp);
+      playSfx("heal");
       let text = `${item.name} restaurou HP de ${mon.nickname || mon.name}.`;
       text += enemyTurn();
       finishRound(text);
@@ -1062,6 +1262,7 @@ function removeItem(key, qty) {
 }
 
 function openShop() {
+  playSfx("open");
   const stock = state.player.badges.includes("crystal")
     ? ["pokeBall", "greatBall", "potion", "superPotion", "antidote", "paralyzeHeal", "repel", "escapeRope"]
     : state.player.badges.includes("coral")
@@ -1099,6 +1300,7 @@ function openShop() {
 
 
 function openBagMenu() {
+  playSfx("open");
   const entries = Object.entries(state.player.bag).filter(([, qty]) => qty > 0);
   if (!entries.length) {
     say("Mochila vazia.");
@@ -1133,6 +1335,7 @@ function useFieldItem(key) {
       const mon = state.player.party[idx];
       removeItem(key, 1);
       mon.hp = clamp(mon.hp + item.amount, 0, mon.maxHp);
+      playSfx("heal");
       say(`${item.name} restaurou HP de ${mon.nickname || mon.name}.`);
       render();
     });
@@ -1202,6 +1405,7 @@ function openBox() {
 }
 
 function openPartyMenu() {
+  playSfx("open");
   const rows = state.player.party.map((mon, idx) => `
     <button class="choice-btn" value="${idx}" type="submit">
       <img src="${monFront(mon.id)}" onerror="this.src='${monFallback(mon.id)}'" alt="${mon.name}">
@@ -1285,6 +1489,7 @@ function choosePokemon(title, filter, callback) {
 }
 
 function openMap() {
+  playSfx("open");
   const current = LOCATIONS[state.player.location];
   const nodes = LOCATION_ORDER.map(id => {
     const loc = LOCATIONS[id];
@@ -1316,6 +1521,7 @@ function openMap() {
 }
 
 function openJournal() {
+  playSfx("open");
   const badges = state.player.badges.length ? state.player.badges.map(b => b === "coral" ? "Insígnia Coral" : "Insígnia Beacon").join(" • ") : "nenhuma";
   modalContent.innerHTML = `
     <h3>Diário</h3>
@@ -1337,6 +1543,7 @@ function openJournal() {
 }
 
 function openDex() {
+  playSfx("open");
   const ids = Object.keys(POKEMON).map(Number).sort((a, b) => a - b);
   const cards = ids.map(id => {
     const seen = state.player.seen.includes(id);
@@ -1391,6 +1598,7 @@ function showDexDetails(id) {
   modal.showModal();
 }
 function openSettings() {
+  playSfx("open");
   const saved = loadGame();
   const settings = state?.settings || saved?.settings || loadSavedSettings();
   modalContent.innerHTML = `
@@ -1416,6 +1624,24 @@ function openSettings() {
         <option value="false" ${!settings.motion ? "selected" : ""}>Reduzido</option>
       </select>
     </div>
+    <div class="modal-row two-cols">
+      <label>Música</label>
+      <select name="music">
+        <option value="true" ${settings.music ? "selected" : ""}>Ligada</option>
+        <option value="false" ${!settings.music ? "selected" : ""}>Desligada</option>
+      </select>
+    </div>
+    <div class="modal-row two-cols">
+      <label>Efeitos</label>
+      <select name="sfx">
+        <option value="true" ${settings.sfx ? "selected" : ""}>Ligados</option>
+        <option value="false" ${!settings.sfx ? "selected" : ""}>Desligados</option>
+      </select>
+    </div>
+    <div class="modal-row">
+      <label>Volume</label>
+      <input name="volume" type="range" min="0" max="100" step="5" value="${settings.volume ?? 70}">
+    </div>
     <div class="modal-actions">
       <button class="mini-btn primary" value="save">Salvar</button>
       <button class="mini-btn" value="close">Fechar</button>
@@ -1425,11 +1651,14 @@ function openSettings() {
     e.preventDefault();
     if (e.submitter?.value === "close") return modal.close();
     const data = new FormData(modalContent);
-    const nextSettings = {
+    const nextSettings = normalizeSettings({
       text: data.get("text"),
       theme: data.get("theme"),
-      motion: data.get("motion") === "true"
-    };
+      motion: data.get("motion") === "true",
+      music: data.get("music") === "true",
+      sfx: data.get("sfx") === "true",
+      volume: Number(data.get("volume") || 70)
+    });
     if (state?.player?.party?.length) {
       state.settings = nextSettings;
       saveGame(true);
@@ -1443,6 +1672,7 @@ function openSettings() {
 }
 
 function startNewGame() {
+  AUDIO.ensure();
   modalContent.innerHTML = `
     <h3>Novo jogo</h3>
     <p>${STORY_BEATS.intro}</p>
@@ -1543,6 +1773,7 @@ function starterButton(id, name, hint = "") {
 }
 
 function continueGame() {
+  AUDIO.ensure();
   const loaded = loadGame();
   if (!loaded) {
     state = freshState();
@@ -1637,6 +1868,8 @@ function registerServiceWorker() {
 }
 
 function init() {
+  document.addEventListener("pointerdown", () => AUDIO.ensure(), { once: true });
+  document.addEventListener("click", event => { if (event.target.closest("button")) playSfx("tap"); });
   setupInstallExperience();
   registerServiceWorker();
   $("#newGameBtn").addEventListener("click", startNewGame);

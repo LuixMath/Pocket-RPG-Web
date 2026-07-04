@@ -2,7 +2,7 @@
   "id": "./",
   "name": "Pokémon Veyra RPG",
   "short_name": "Veyra",
-  "description": "RPG textual retrô feito por Luiz Matheus / Luix Studios, com PWA mobile, mapa, diário, captura e batalhas por turnos.",
+  "description": "RPG retrô feito por Luiz Matheus / Luix Studios, com PWA mobile, sprites, áudio, transições, captura e batalhas por turnos.",
   "lang": "pt-BR",
   "dir": "ltr",
   "start_url": "./index.html",

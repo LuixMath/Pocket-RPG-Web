@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="description" content="RPG retrô textual/visual feito por Luiz Matheus / Luix Studios. Versão mobile PWA com introdução, exploração por passos, captura, batalhas e save." />
+  <meta name="description" content="RPG retrô textual/visual feito por Luiz Matheus / Luix Studios. Versão mobile PWA com sprites, áudio, transições, captura, batalhas e save." />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Pokémon Veyra" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="format-detection" content="telephone=no" />
   <meta name="theme-color" content="#8cad28" />
-  <title>Pokémon Veyra RPG v1.3</title>
+  <title>Pokémon Veyra RPG v1.4</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png" />
@@ -22,7 +22,7 @@
   <main id="app" class="app-shell" data-screen="menu">
     <section id="menuScreen" class="screen screen-menu">
       <div class="gbc-card title-card">
-        <p class="eyebrow">RPG retrô • v1.3</p>
+        <p class="eyebrow">RPG retrô • v1.4</p>
         <h1>Pokémon Veyra</h1>
         <p class="subtitle">Uma aventura costeira fan-made feita por Luiz Matheus.</p>
         <div class="pixel-stars" aria-hidden="true"></div>
@@ -69,6 +69,8 @@
             <span id="chapterTag">Capítulo 1</span>
             <h2 id="locationName">Cove</h2>
           </div>
+
+          <div id="transitionFx" class="transition-fx" aria-hidden="true"></div>
 
           <div id="battleView" class="battle-view" hidden>
             <div class="battle-field">

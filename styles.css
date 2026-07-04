@@ -873,3 +873,187 @@ button.dex-card { font: inherit; color: inherit; cursor: pointer; }
   .party-detail img, .dex-detail img { width: 70px; height: 70px; }
 }
 .stage { position: relative; }
+
+/* v1.4 - Presentation, audio controls, sprite polish */
+button, .btn, .mini-btn, .action-btn, .choice-btn {
+  position: relative;
+  border-radius: 4px;
+  letter-spacing: .01em;
+}
+.action-btn {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.42), transparent 52%),
+    var(--paper-2);
+}
+.action-btn b { display: block; }
+.btn-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 3px solid var(--line-dark);
+  background: #fbffe8;
+  box-shadow: inset -2px -2px 0 rgba(69,91,34,.18);
+  font-weight: 900;
+  line-height: 1;
+}
+.choice-btn {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.38), transparent 50%),
+    var(--paper-2);
+}
+.choice-btn:hover, .action-btn:hover, .mini-btn:hover, .btn:hover {
+  filter: brightness(1.04) saturate(1.04);
+}
+
+/* Pokémon sprites from transparent default PokeAPI endpoint */
+.mon-sprite,
+.party-mon img,
+.bag-row img,
+.choice-btn img,
+.dex-card img,
+.party-detail img,
+.dex-detail img,
+.scene-mon {
+  background: transparent !important;
+  mix-blend-mode: normal;
+}
+
+.overworld-sprite {
+  position: absolute;
+  width: 64px;
+  height: 80px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  transform: translate(-50%, -50%);
+  filter: drop-shadow(4px 7px 0 rgba(0,0,0,.25));
+  z-index: 3;
+}
+.hero-sprite { left: 42%; top: 67%; animation: spriteBob .85s steps(2) infinite; }
+.npc-sprite { left: 62%; top: 46%; animation: npcIdle 1.4s steps(2) infinite; }
+.scene-bedroom .hero-sprite { left: 32%; top: 67%; }
+.scene-bedroom .npc-sprite { left: 74%; top: 62%; }
+.scene-lab .hero-sprite { left: 34%; top: 66%; }
+.scene-lab .npc-sprite { left: 64%; top: 50%; }
+.sprite { display: none; }
+
+.transition-fx {
+  pointer-events: none;
+  position: absolute;
+  inset: 12px;
+  z-index: 12;
+  overflow: hidden;
+  border: 4px solid transparent;
+}
+.transition-fx::before,
+.transition-fx::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+.battle-ripple .transition-fx::before {
+  opacity: 1;
+  background: repeating-radial-gradient(circle at center, rgba(251,255,232,.95) 0 6px, rgba(26,39,16,.95) 7px 12px, transparent 13px 18px);
+  animation: battleRipple .62s steps(8, end) forwards;
+}
+.battle-wipe .transition-fx::after {
+  opacity: 1;
+  background: repeating-linear-gradient(135deg, rgba(26,39,16,.97) 0 24px, rgba(185,212,92,.97) 24px 48px);
+  animation: battleWipe .62s steps(8, end) forwards;
+}
+.in-battle .pixel-scene { filter: saturate(.85) brightness(.95); }
+.battle-view[hidden] { display: none !important; }
+.battle-view:not([hidden]) .battle-field { animation: battleFieldIn .32s steps(4, end); }
+.battle-view:not([hidden]) .enemy { animation: foeSendIn .42s steps(4, end); }
+.battle-view:not([hidden]) .player-mon { animation: playerSendIn .42s steps(4, end); }
+.anim-attack { animation: monAttack .22s steps(2, end) !important; }
+.anim-hit { animation: monHit .24s steps(2, end) !important; }
+.anim-faint { animation: monFaint .6s steps(5, end) forwards !important; }
+.anim-enter { animation: playerSendIn .38s steps(4, end) !important; }
+.flash-faint { animation: sceneFaint .5s steps(4); }
+
+.battle-field::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(255,255,255,.09) 0 2px, transparent 2px 5px);
+  z-index: 0;
+}
+.enemy-side, .player-side { z-index: 1; }
+.battle-hud { z-index: 2; }
+.mon-sprite { z-index: 2; }
+
+.modal-row input[type="range"] {
+  accent-color: var(--green);
+  height: 34px;
+  padding: 0;
+}
+.modal-row.two-cols {
+  grid-template-columns: 120px 1fr;
+  align-items: center;
+}
+
+@keyframes spriteBob { 50% { transform: translate(-50%, -52%); } }
+@keyframes npcIdle { 50% { transform: translate(-50%, -51%); } }
+@keyframes battleRipple {
+  0% { clip-path: circle(0% at 50% 50%); transform: scale(.9); }
+  70% { opacity: 1; }
+  100% { clip-path: circle(90% at 50% 50%); opacity: 0; transform: scale(1.05); }
+}
+@keyframes battleWipe {
+  0% { transform: translateX(-105%); opacity: 1; }
+  52% { transform: translateX(0); opacity: 1; }
+  100% { transform: translateX(105%); opacity: 0; }
+}
+@keyframes battleFieldIn {
+  0% { filter: contrast(1.4) brightness(.65); transform: scale(.98); }
+  100% { filter: none; transform: scale(1); }
+}
+@keyframes foeSendIn {
+  0% { transform: translateX(42px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+@keyframes playerSendIn {
+  0% { transform: translateX(-42px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+@keyframes monAttack {
+  50% { transform: translate(10px, -4px) scale(1.04); filter: brightness(1.18); }
+}
+@keyframes monHit {
+  0%, 100% { filter: none; }
+  25% { transform: translateX(-8px); filter: brightness(2) contrast(1.4); }
+  50% { opacity: .25; transform: translateX(8px); }
+  75% { opacity: 1; transform: translateX(-4px); }
+}
+@keyframes monFaint {
+  0% { opacity: 1; transform: translateY(0); filter: grayscale(0); }
+  100% { opacity: 0; transform: translateY(34px); filter: grayscale(1); }
+}
+@keyframes sceneFaint {
+  50% { filter: grayscale(1) brightness(.8); }
+}
+
+@media (max-width: 720px) {
+  .action-btn { grid-template-columns: 30px 1fr; min-height: 58px; padding: 8px; }
+  .btn-icon { width: 26px; height: 26px; font-size: .86rem; }
+  .overworld-sprite { width: 54px; height: 68px; }
+  .modal-row.two-cols { grid-template-columns: 1fr; }
+}
+.location-backdrop.battle-ripple + .transition-fx::before {
+  opacity: 1;
+  background: repeating-radial-gradient(circle at center, rgba(251,255,232,.95) 0 6px, rgba(26,39,16,.95) 7px 12px, transparent 13px 18px);
+  animation: battleRipple .62s steps(8, end) forwards;
+}
+.location-backdrop.battle-wipe + .transition-fx::after {
+  opacity: 1;
+  background: repeating-linear-gradient(135deg, rgba(26,39,16,.97) 0 24px, rgba(185,212,92,.97) 24px 48px);
+  animation: battleWipe .62s steps(8, end) forwards;
+}

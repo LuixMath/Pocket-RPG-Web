@@ -1,4 +1,4 @@
-const CACHE_NAME = "pokemon-veyra-rpg-v1-2-4";
+const CACHE_NAME = "pokemon-veyra-rpg-v1-4-presentation";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -9,7 +9,14 @@ const CORE_ASSETS = [
   "./assets/icons/apple-touch-icon.png",
   "./assets/icons/icon-192.png",
   "./assets/icons/icon-512.png",
-  "./assets/icons/maskable-512.png"
+  "./assets/icons/maskable-512.png",
+  "./assets/sprites/hero.gif",
+  "./assets/sprites/npc.png",
+  "./assets/sprites/professor.png",
+  "./assets/sprites/mom.png",
+  "./assets/sprites/rival.png",
+  "./assets/sprites/nurse.png",
+  "./assets/sprites/shopkeeper.png"
 ];
 
 self.addEventListener("install", event => {

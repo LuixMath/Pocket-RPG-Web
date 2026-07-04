@@ -1,9 +1,12 @@
 const SPRITE_ROOT = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites";
 
 const itemIcon = file => `${SPRITE_ROOT}/items/${file}.png`;
-const monFront = id => `${SPRITE_ROOT}/pokemon/versions/generation-ii/crystal/${id}.png`;
-const monBack = id => `${SPRITE_ROOT}/pokemon/versions/generation-ii/crystal/back/${id}.png`;
-const monFallback = id => `${SPRITE_ROOT}/pokemon/${id}.png`;
+// Sprites transparentes por padrão. Os sprites Crystal continuam disponíveis se quiser trocar depois.
+const monFront = id => `${SPRITE_ROOT}/pokemon/${id}.png`;
+const monBack = id => `${SPRITE_ROOT}/pokemon/back/${id}.png`;
+const monFallback = id => `${SPRITE_ROOT}/pokemon/other/official-artwork/${id}.png`;
+const monCrystalFront = id => `${SPRITE_ROOT}/pokemon/versions/generation-ii/crystal/${id}.png`;
+const monCrystalBack = id => `${SPRITE_ROOT}/pokemon/versions/generation-ii/crystal/back/${id}.png`;
 
 const TYPES = {
   normal: "Normal", fire: "Fogo", water: "Água", grass: "Grama", electric: "Elétrico", dragon: "Dragão",

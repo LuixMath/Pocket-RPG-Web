@@ -6,7 +6,7 @@ RPG retrô textual/visual fan-made de Pokémon com visual retrô inspirado na er
 
 ## Versão atual
 
-**v1.3.0 — Overworld & Battle Polish**
+**v1.4.0 — Overworld & Battle Polish**
 
 Esta versão corrige a sensação de protótipo: separa melhor menu/jogo, simplifica os comandos, adiciona introdução jogável, representação visual em sprites, rotas por passos e uma tela de batalha mais próxima dos jogos clássicos.
 
@@ -80,7 +80,7 @@ Os sprites de Pokémon e itens são carregados via URLs públicas do projeto Pok
 Este é um projeto fã para estudo/portfólio. Pokémon, nomes, sprites e marcas pertencem aos seus respectivos donos. O código, montagem, progressão, interface e adaptação deste projeto são de Luiz Matheus / Luix Studios.
 
 
-## Log v1.3.0
+## Log v1.4.0
 
 - Corrigido o problema visual de menu e tela do jogo aparecerem juntos com regras CSS mais fortes para telas ativas.
 - Menus de campo simplificados para quatro ações principais.
@@ -118,3 +118,23 @@ Este é um projeto fã para estudo/portfólio. Pokémon, nomes, sprites e marcas
 - Adicionados golpes críticos e dano residual de veneno/queimadura.
 - Corrigido dano de golpes sem efeito para causar 0.
 - Melhorada a Pokédex visual com cards e sprites.
+
+
+## v1.4 — Presentation & Audio Update
+
+Esta versão corrigiu a sensação de protótipo e deixou a apresentação mais próxima de um jogo retrô:
+
+- troca dos sprites de Pokémon para o endpoint transparente padrão da PokéAPI, removendo o visual de fundo branco;
+- sprites locais autorais em pixel art para jogador, NPC, professor, mãe, rival, enfermeira e lojista;
+- botões reorganizados com ícones e leitura mais clara no mobile;
+- transição de início de batalha com efeito circular para selvagens e wipe para treinadores/ginásio;
+- animações de entrada, ataque, dano, captura e derrota;
+- barra de HP/EXP com transição visual;
+- sons gerados por Web Audio: clique, passos, batalha, dano, cura, captura, derrota, vitória e level up;
+- música simples estilo chiptune para menu, exploração e batalha;
+- novas opções em Configurações: música, efeitos sonoros e volume;
+- service worker atualizado para cachear os sprites locais.
+
+### Sobre sprites externos
+
+Os sprites de Pokémon e itens continuam vindo do repositório público da PokéAPI. Para personagens/NPCs, esta versão usa sprites autorais locais para evitar empacotar artes ripadas de ROMs. Se você quiser trocar depois por sprites de algum pack, substitua os arquivos em `assets/sprites/` mantendo os mesmos nomes.
