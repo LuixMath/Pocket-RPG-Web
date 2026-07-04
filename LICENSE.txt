@@ -1,5 +1,6 @@
-Código do projeto: criado por Luiz Matheus / Luix Studios.
+Projeto individual de Luiz Matheus / Luix Studios para portfólio e estudo.
 
-Uso sugerido: estudo, portfólio e demonstração técnica.
+Código, interface própria, mapas, tiles autorais e músicas geradas por código: uso pessoal/educacional, sem garantia.
 
-Observação: Pokémon, sprites, nomes, marcas e elementos relacionados pertencem aos seus respectivos donos. Este projeto é fan-made e não é afiliado, endossado ou publicado pela Nintendo, Game Freak, Creatures ou The Pokémon Company.
+Pokémon, nomes, sprites de Pokémon, itens e marcas relacionadas pertencem a Nintendo, The Pokémon Company, Creatures Inc. e GAME FREAK.
+Este projeto não é comercial e não é afiliado, aprovado ou endossado pelos proprietários da franquia.

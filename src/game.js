@@ -1,1889 +1,673 @@
-const SAVE_KEY = "pokemonVeyraRPG.save.v1";
-const SETTINGS_KEY = "pokemonVeyraRPG.settings.v2";
+/* Pokémon Veyra v1.5 — top-down GBC-style RPG */
+(() => {
+  const { crystalSprite, defaultSprite, TYPES, TYPE_CHART, MOVES, LEARNSETS, DEX, ITEMS, TILE, MAPS, STARTERS, TRAINER_LOOK } = window.VEYRA_DATA;
+  const $ = sel => document.querySelector(sel);
+  const $$ = sel => Array.from(document.querySelectorAll(sel));
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const clamp = (v,min,max) => Math.max(min, Math.min(max, v));
+  const choice = arr => arr[Math.floor(Math.random()*arr.length)];
+  const uid = () => Math.random().toString(36).slice(2,9);
 
-let state = null;
-let battle = null;
-let modalSelection = null;
-let deferredInstallPrompt = null;
-let musicTimer = null;
-let currentMusicMode = null;
+  const canvas = $('#mapCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const VIEW_W = 240, VIEW_H = 160, TILE_SIZE = 16;
+  canvas.width = VIEW_W; canvas.height = VIEW_H;
 
-const AUDIO = {
-  ctx: null,
-  master: null,
-  music: null,
-  sfx: null,
-  unlocked: false,
-  ensure() {
-    if (this.ctx) return;
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    this.ctx = new Ctx();
-    this.master = this.ctx.createGain();
-    this.music = this.ctx.createGain();
-    this.sfx = this.ctx.createGain();
-    this.music.connect(this.master);
-    this.sfx.connect(this.master);
-    this.master.connect(this.ctx.destination);
-    this.unlocked = true;
-    applyAudioSettings();
-  },
-  tone(freq, duration = .08, type = "square", target = "sfx", delay = 0, volume = .3) {
-    if (!this.ctx) return;
-    const now = this.ctx.currentTime + delay;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, now);
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(volume, now + .01);
-    gain.gain.exponentialRampToValueAtTime(.001, now + duration);
-    osc.connect(gain);
-    gain.connect(target === "music" ? this.music : this.sfx);
-    osc.start(now);
-    osc.stop(now + duration + .03);
-  },
-  noise(duration = .08, delay = 0, volume = .18) {
-    if (!this.ctx) return;
-    const now = this.ctx.currentTime + delay;
-    const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * duration, this.ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-    const src = this.ctx.createBufferSource();
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(volume, now);
-    gain.gain.exponentialRampToValueAtTime(.001, now + duration);
-    src.buffer = buffer; src.connect(gain); gain.connect(this.sfx); src.start(now); src.stop(now + duration);
-  }
-};
+  const SAVE_KEY = 'pokemon-veyra-save-v15';
+  const VERSION = '1.5.0';
 
-function audioSettings() {
-  return state?.settings || loadSavedSettings();
-}
+  const defaultSettings = { music:true, sfx:true, volume:.45, motion:true, textSpeed:22, theme:'crystal' };
+  let state = null;
+  let activeScreen = 'title';
+  let menuOpen = false;
+  let menuSection = 'party';
+  let messageQueue = [];
+  let typing = false;
+  let battle = null;
+  let locks = { move:false, dialog:false, battle:false };
+  let lastRender = 0;
+  let shake = 0;
+  let encounterCooldown = 0;
 
-function applyAudioSettings() {
-  if (!AUDIO.ctx || !AUDIO.master) return;
-  const settings = audioSettings();
-  const volume = clamp(Number(settings.volume ?? 70), 0, 100) / 100;
-  AUDIO.master.gain.value = volume;
-  AUDIO.music.gain.value = settings.music === false ? 0 : .18;
-  AUDIO.sfx.gain.value = settings.sfx === false ? 0 : .38;
-}
-
-function playSfx(name) {
-  const settings = audioSettings();
-  if (settings.sfx === false || !settings.motion && name === "step") return;
-  AUDIO.ensure();
-  if (!AUDIO.ctx) return;
-  const seq = {
-    tap: [[520,.035]],
-    step: [[260,.04],[330,.035,.045]],
-    open: [[420,.05],[640,.06,.055]],
-    battleStart: [[160,.08],[220,.08,.08],[330,.1,.16],[660,.12,.28]],
-    hit: [[110,.05],[90,.05,.045]],
-    heal: [[440,.06],[660,.08,.07]],
-    catch: [[520,.07],[620,.07,.1],[780,.16,.2]],
-    fail: [[220,.08],[180,.12,.09]],
-    faint: [[330,.08],[260,.08,.08],[180,.14,.16]],
-    win: [[523,.08],[659,.08,.09],[784,.16,.18]],
-    level: [[392,.07],[523,.07,.08],[659,.12,.16]]
-  }[name];
-  if (name === "hit") AUDIO.noise(.08, 0, .25);
-  if (seq) seq.forEach(([freq,dur,delay=0]) => AUDIO.tone(freq,dur,"square","sfx",delay,.28));
-}
-
-const MUSIC_PATTERNS = {
-  menu: [392,0,523,0,659,0,523,0],
-  overworld: [262,330,392,330,294,370,440,370],
-  battle: [220,247,262,330,294,262,247,220]
-};
-
-function startMusic(mode) {
-  const settings = audioSettings();
-  if (settings.music === false || settings.motion === false) return stopMusic();
-  AUDIO.ensure();
-  if (!AUDIO.ctx || currentMusicMode === mode) return;
-  stopMusic();
-  currentMusicMode = mode;
-  let i = 0;
-  const playNote = () => {
-    if (!AUDIO.ctx || audioSettings().music === false) return;
-    const pattern = MUSIC_PATTERNS[mode] || MUSIC_PATTERNS.overworld;
-    const note = pattern[i % pattern.length];
-    if (note) {
-      AUDIO.tone(note, .1, "square", "music", 0, .18);
-      AUDIO.tone(note / 2, .12, "triangle", "music", 0, .08);
+  class AudioEngine {
+    constructor(){ this.ctx=null; this.master=null; this.current=null; this.timer=null; this.step=0; }
+    ensure(){
+      if(this.ctx) return;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if(!AC) return;
+      this.ctx = new AC();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = state?.settings?.volume ?? defaultSettings.volume;
+      this.master.connect(this.ctx.destination);
     }
-    i++;
-  };
-  playNote();
-  musicTimer = window.setInterval(playNote, mode === "battle" ? 170 : 310);
-}
-
-function stopMusic() {
-  if (musicTimer) window.clearInterval(musicTimer);
-  musicTimer = null;
-  currentMusicMode = null;
-}
-
-const $ = selector => document.querySelector(selector);
-const app = $("#app");
-const menuScreen = $("#menuScreen");
-const gameScreen = $("#gameScreen");
-const actionGrid = $("#actionGrid");
-const mainText = $("#mainText");
-const modal = $("#modal");
-const modalContent = $("#modalContent");
-
-const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
-const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const pick = list => list[Math.floor(Math.random() * list.length)];
-const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-const pct = (value, max) => clamp(Math.round((value / max) * 100), 0, 100);
-
-function freshState() {
-  return {
-    version: 2,
-    player: {
-      name: "Luiz",
-      money: 1200,
-      location: "brisa",
-      party: [],
-      box: [],
-      bag: { pokeBall: 6, potion: 4, antidote: 1, paralyzeHeal: 1 },
-      badges: [],
-      seen: [],
-      caught: [],
-      repelSteps: 0
-    },
-    flags: { introActive: false, introStep: 0, introScene: "town" },
-    routeProgress: {},
-    settings: loadSavedSettings(),
-    stats: { steps: 0, wins: 0, captures: 0, whites: 0 },
-    lastSavedAt: null
-  };
-}
-
-function pokemonData(id) {
-  return POKEMON[id];
-}
-
-function calcStats(id, level) {
-  const base = pokemonData(id).base;
-  return {
-    hp: Math.floor(((base.hp * 2) * level) / 100) + level + 10,
-    atk: Math.floor(((base.atk * 2) * level) / 100) + 5,
-    def: Math.floor(((base.def * 2) * level) / 100) + 5,
-    spd: Math.floor(((base.spd * 2) * level) / 100) + 5
-  };
-}
-
-function movesFor(id, level) {
-  const learned = pokemonData(id).learn
-    .filter(([learnLevel]) => learnLevel <= level)
-    .map(([, move]) => move)
-    .filter(move => MOVES[move]);
-  const unique = [...new Set(learned)].slice(-4);
-  return unique.map(key => ({ key, pp: MOVES[key].pp }));
-}
-
-function createMon(id, level, nickname = null) {
-  const stats = calcStats(id, level);
-  return {
-    uid: uid(), id, nickname,
-    name: pokemonData(id).name,
-    types: [...pokemonData(id).types],
-    level,
-    exp: 0,
-    nextExp: expToNext(level),
-    maxHp: stats.hp,
-    hp: stats.hp,
-    stats,
-    moves: movesFor(id, level),
-    status: null,
-    temp: { atk: 0, def: 0 }
-  };
-}
-
-function expToNext(level) {
-  return Math.floor(24 + Math.pow(level, 2.15) * 3.8);
-}
-
-function refreshMon(mon, keepHpRatio = true) {
-  const ratio = keepHpRatio ? mon.hp / mon.maxHp : 1;
-  const stats = calcStats(mon.id, mon.level);
-  mon.name = pokemonData(mon.id).name;
-  mon.types = [...pokemonData(mon.id).types];
-  mon.stats = stats;
-  mon.maxHp = stats.hp;
-  mon.hp = clamp(Math.ceil(stats.hp * ratio), 1, stats.hp);
-  const currentMoveKeys = mon.moves.map(m => m.key);
-  const learned = movesFor(mon.id, mon.level);
-  learned.forEach(move => {
-    if (!currentMoveKeys.includes(move.key)) mon.moves.push(move);
-  });
-  mon.moves = mon.moves.slice(-4).map(m => ({ key: m.key, pp: Math.min(m.pp ?? MOVES[m.key].pp, MOVES[m.key].pp) }));
-}
-
-function addSeen(id) {
-  if (!state.player.seen.includes(id)) state.player.seen.push(id);
-}
-
-function addCaught(id) {
-  addSeen(id);
-  if (!state.player.caught.includes(id)) state.player.caught.push(id);
-}
-
-function saveGame(silent = false) {
-  if (!state?.player?.party?.length) return;
-  state.lastSavedAt = new Date().toISOString();
-  localStorage.setItem(SAVE_KEY, JSON.stringify(state));
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
-  render();
-  if (!silent) say("Jogo salvo.");
-}
-
-function defaultSettings() {
-  return { text: "normal", motion: true, theme: "crystal", music: true, sfx: true, volume: 70 };
-}
-
-function normalizeSettings(parsed = {}) {
-  return {
-    text: parsed.text === "fast" ? "fast" : "normal",
-    motion: parsed.motion !== false,
-    theme: parsed.theme === "night" ? "night" : "crystal",
-    music: parsed.music !== false,
-    sfx: parsed.sfx !== false,
-    volume: clamp(Number(parsed.volume ?? 70), 0, 100)
-  };
-}
-
-function loadSavedSettings() {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return defaultSettings();
-    return normalizeSettings(JSON.parse(raw));
-  } catch {
-    return defaultSettings();
+    setVolume(v){ if(this.master) this.master.gain.value = v; }
+    tone(freq, dur=.09, type='square', gain=.05){
+      if(!state?.settings?.sfx && type !== 'triangle') return;
+      this.ensure(); if(!this.ctx) return;
+      const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.value = gain; g.gain.exponentialRampToValueAtTime(.0001, this.ctx.currentTime + dur);
+      o.connect(g); g.connect(this.master); o.start(); o.stop(this.ctx.currentTime + dur);
+    }
+    sfx(name){
+      if(!state?.settings?.sfx) return;
+      const pack = {
+        click:[420,520], step:[160], bump:[90,70], heal:[520,660,780], hit:[110,90], dmg:[180,120], catch:[420,520,620], fail:[220,180,130], win:[660,880,990], lose:[200,160,120], level:[520,660,880,1040], start:[120,180,260,360]
+      }[name] || [440];
+      pack.forEach((n,i)=>setTimeout(()=>this.tone(n,.07,'square',.035),i*55));
+    }
+    play(track){
+      if(!state?.settings?.music) return;
+      this.ensure(); if(!this.ctx) return;
+      if(this.current === track && this.timer) return;
+      this.stop(); this.current = track; this.step = 0;
+      const patterns = {
+        menu:[392,0,392,523,494,0,440,392,330,0,392,440,523,0,494,392],
+        home:[262,330,392,0,330,392,523,0,392,330,294,0,330,392,330,0],
+        lab:[330,370,392,494,392,370,330,0,294,330,370,392,494,0,392,330],
+        cove:[392,440,494,0,523,494,440,392,330,392,440,0,494,440,392,330],
+        route:[523,587,659,0,587,523,494,440,392,440,494,0,523,494,440,392],
+        forest:[330,392,330,294,262,0,294,330,392,440,392,330,294,0,262,0],
+        cave:[196,0,220,0,247,0,220,196,185,0,196,0,220,247,220,0],
+        coast:[440,494,523,587,659,0,587,523,494,0,523,587,659,784,659,0],
+        noxport:[392,494,587,0,659,587,494,392,440,523,659,0,587,523,494,0],
+        gym:[220,247,262,294,330,0,330,294,262,0,247,220,196,220,247,0],
+        battle:[196,262,330,392,330,262,196,0,220,294,349,440,349,294,220,0]
+      };
+      const notes = patterns[track] || patterns.route;
+      this.timer = setInterval(()=>{
+        if(!state.settings.music) return;
+        const n = notes[this.step % notes.length];
+        if(n) this.musicTone(n, .15, .025);
+        if(this.step % 4 === 0) this.musicTone(n/2 || 110, .12, .014, 'triangle');
+        this.step++;
+      }, 210);
+    }
+    musicTone(freq, dur=.12, gain=.02, type='square'){
+      this.ensure(); if(!this.ctx) return;
+      const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.value = gain; g.gain.linearRampToValueAtTime(0, this.ctx.currentTime + dur);
+      o.connect(g); g.connect(this.master); o.start(); o.stop(this.ctx.currentTime + dur);
+    }
+    stop(){ if(this.timer) clearInterval(this.timer); this.timer=null; this.current=null; }
   }
-}
+  const audio = new AudioEngine();
 
-function saveOnlySettings(settings) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-}
-
-function loadGame() {
-  const raw = localStorage.getItem(SAVE_KEY);
-  if (!raw) return null;
-  try {
-    const loaded = JSON.parse(raw);
-    if (!loaded?.player?.party) return null;
-    return migrateSave(loaded);
-  } catch {
-    return null;
+  function newState(){
+    return {
+      version: VERSION,
+      map: 'bedroom', x: 7, y: 7, face:'down', money: 0, steps: 0,
+      playerName: 'Luiz', badges: [], flags:{ introDone:false, woke:false },
+      bag:{}, keyItems:{}, party:[], box:[], seen:{}, caught:{}, defeated:{}, picked:{},
+      quest: 'Acorde, desça e procure o Laboratório Aroeira.', settings:{...defaultSettings}, repel:0,
+      routeProgress:{}, stats:{ caught:0, wins:0, playStarted:Date.now() }
+    };
   }
-}
 
-function migrateSave(loaded) {
-  loaded.version = Math.max(Number(loaded.version || 1), 2);
-  loaded.player.bag ||= {};
-  loaded.player.box ||= [];
-  loaded.player.badges ||= [];
-  loaded.player.seen ||= [];
-  loaded.player.caught ||= [];
-  loaded.player.repelSteps ||= 0;
-  loaded.flags ||= {};
-  loaded.routeProgress ||= {};
-  loaded.stats ||= { steps: 0, wins: 0, captures: 0, whites: 0 };
-  loaded.settings = normalizeSettings({ ...loadSavedSettings(), ...(loaded.settings || {}) });
-  loaded.player.party.forEach(mon => { mon.temp ||= { atk: 0, def: 0 }; mon.moves ||= movesFor(mon.id, mon.level); refreshMon(mon, true); });
-  loaded.player.box.forEach(mon => { mon.temp ||= { atk: 0, def: 0 }; mon.moves ||= movesFor(mon.id, mon.level); refreshMon(mon, true); });
-  return loaded;
-}
+  function save(){ localStorage.setItem(SAVE_KEY, JSON.stringify(state)); toast('Jogo salvo.'); }
+  function load(){
+    try { const raw = localStorage.getItem(SAVE_KEY); return raw ? JSON.parse(raw) : null; }
+    catch { return null; }
+  }
+  function eraseSave(){ localStorage.removeItem(SAVE_KEY); state = newState(); showScreen('title'); renderTitle(); }
 
-function setScreen(screen) {
-  app.dataset.screen = screen;
-  menuScreen.hidden = screen !== "menu";
-  gameScreen.hidden = screen !== "game";
-  if (screen === "menu" && !state) startMusic("menu");
-}
+  function addItem(item, qty=1){
+    if(ITEMS[item]?.key) state.keyItems[item] = true;
+    else state.bag[item] = (state.bag[item] || 0) + qty;
+  }
+  function takeItem(item, qty=1){
+    if((state.bag[item] || 0) < qty) return false;
+    state.bag[item] -= qty; if(state.bag[item] <= 0) delete state.bag[item]; return true;
+  }
+  function hasFlag(flag){ return !!state.flags[flag] || !!state.defeated[flag] || state.badges.includes(flag); }
+  function setFlag(flag, value=true){ state.flags[flag] = value; }
 
-function say(text) {
-  mainText.textContent = text;
-}
+  function makeMon(mon, level=5, wild=false){
+    const spec = DEX[mon];
+    const iv = wild ? Math.floor(Math.random()*5) : 3;
+    const stats = calcStats(spec, level, iv);
+    const moves = (LEARNSETS[mon] || [[1,'tackle']]).filter(([lvl]) => lvl <= level).slice(-4).map(([_, id]) => ({ id, pp: MOVES[id].pp }));
+    return { uid:uid(), mon, name:spec.name, level, exp:0, next: nextExp(level), hp:stats.hp, maxHp:stats.hp, stats, moves, status:null, iv, fainted:false };
+  }
+  function calcStats(spec, level, iv=3){
+    const b = spec.base;
+    return {
+      hp: Math.floor(((b.hp + iv) * 2 * level)/100) + level + 10,
+      atk: Math.floor(((b.atk + iv) * 2 * level)/100) + 5,
+      def: Math.floor(((b.def + iv) * 2 * level)/100) + 5,
+      spd: Math.floor(((b.spd + iv) * 2 * level)/100) + 5
+    };
+  }
+  function nextExp(level){ return Math.floor(20 + level * level * 6.2); }
+  function healAll(){
+    state.party.forEach(m => { m.stats = calcStats(DEX[m.mon], m.level, m.iv); m.maxHp = m.stats.hp; m.hp = m.maxHp; m.status = null; m.fainted=false; m.moves.forEach(x => x.pp = MOVES[x.id].pp); });
+  }
+  function activeMon(){ return state.party.find(m => m.hp > 0) || state.party[0]; }
+  function addPokemon(mon){
+    state.seen[mon.mon] = true; state.caught[mon.mon] = true;
+    if(state.party.length < 6) state.party.push(mon); else state.box.push(mon);
+    state.stats.caught = Object.keys(state.caught).length;
+  }
 
-function iconForAction(label) {
-  const key = label.toLowerCase();
-  if (key.includes("lutar")) return "⚔";
-  if (key.includes("mochila") || key.includes("bolsa")) return "▣";
-  if (key.includes("pokémon") || key.includes("equipe")) return "●";
-  if (key.includes("fugir") || key.includes("voltar")) return "↩";
-  if (key.includes("avançar") || key.includes("viajar")) return "➜";
-  if (key.includes("procurar") || key.includes("explorar")) return "⌕";
-  if (key.includes("menu")) return "☰";
-  if (key.includes("conversar")) return "!";
-  if (key.includes("continuar")) return "▶";
-  return "◆";
-}
+  function showScreen(name){
+    activeScreen = name;
+    $$('.screen').forEach(s => s.classList.remove('is-active'));
+    $(`#${name}Screen`)?.classList.add('is-active');
+    document.body.dataset.screen = name;
+    if(name === 'game') startMapMusic();
+    if(name === 'title') audio.play('menu');
+  }
 
-function action(label, handler, hint = "") {
-  const btn = document.createElement("button");
-  btn.className = "action-btn";
-  btn.type = "button";
-  btn.innerHTML = `<span class="btn-icon">${iconForAction(label)}</span><span><b>${label}</b>${hint ? `<small>${hint}</small>` : ""}</span>`;
-  btn.addEventListener("click", handler);
-  actionGrid.appendChild(btn);
-}
-
-function render() {
-  if (!state) return;
-  document.body.classList.toggle("no-motion", !state.settings.motion);
-  document.body.classList.toggle("night", state.settings.theme === "night");
-  document.body.classList.toggle("fast-text", state.settings.text === "fast");
-  applyAudioSettings();
-  if (state.settings.music !== false) startMusic(battle ? "battle" : "overworld");
-  else stopMusic();
-
-  const loc = LOCATIONS[state.player.location];
-  $("#locationName").textContent = state.flags.introActive ? (INTRO_STEPS[state.flags.introStep]?.title || loc.name) : loc.name;
-  $("#chapterTag").textContent = state.flags.introActive ? "Introdução" : loc.chapter;
-  $("#locationBackdrop").className = `location-backdrop ${state.flags.introActive ? (state.flags.introScene || loc.kind) : loc.kind}`;
-  renderOverworld();
-  $("#playerName").textContent = state.player.name;
-  $("#playerMoney").textContent = `₽ ${state.player.money}`;
-  $("#saveState").textContent = state.lastSavedAt ? `salvo ${new Date(state.lastSavedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : "sem save";
-  const objective = currentObjective();
-  const objectiveEl = $("#objectiveText");
-  if (objectiveEl) objectiveEl.textContent = objective;
-
-  renderSide();
-  renderActions();
-  renderBattle();
-}
-
-function renderSide() {
-  const badgeList = $("#badgeList");
-  badgeList.innerHTML = "";
-  const badgeOrder = ["coral", "crystal"];
-  badgeOrder.forEach((badge, idx) => {
-    const node = document.createElement("span");
-    node.className = `badge ${state.player.badges.includes(badge) ? "" : "empty-badge"}`;
-    node.title = badge === "coral" ? "Insígnia Coral" : "Insígnia Beacon";
-    node.textContent = state.player.badges.includes(badge) ? ["C", "P"][idx] : "?";
-    badgeList.appendChild(node);
-  });
-
-  const party = $("#partyList");
-  party.innerHTML = "";
-  state.player.party.forEach((mon, idx) => {
-    const hpClass = pct(mon.hp, mon.maxHp) <= 25 ? "low" : pct(mon.hp, mon.maxHp) <= 55 ? "mid" : "";
-    const row = document.createElement("div");
-    row.className = "party-mon";
-    row.innerHTML = `
-      <img src="${monFront(mon.id)}" onerror="this.src='${monFallback(mon.id)}'" alt="${mon.name}">
-      <div>
-        <strong>${mon.nickname || mon.name} <span>Lv.${mon.level}</span></strong>
-        <div class="hpbar ${hpClass}"><i style="width:${pct(mon.hp, mon.maxHp)}%"></i></div>
-      </div>
-      <small>${mon.hp}/${mon.maxHp}</small>
+  function renderTitle(){
+    const canContinue = !!load();
+    $('#titleActions').innerHTML = `
+      <button class="primary" id="newGameBtn"><span>▶</span> Novo jogo</button>
+      <button ${canContinue?'':'disabled'} id="continueBtn"><span>◆</span> Continuar</button>
+      <button id="termsBtn"><span>©</span> Termos</button>
     `;
-    row.addEventListener("click", () => showPokemonDetails(idx));
-    party.appendChild(row);
-  });
-  if (!state.player.party.length) party.innerHTML = `<div class="dex-mini">Nenhum Pokémon.</div>`;
-
-  const bag = $("#bagList");
-  bag.innerHTML = "";
-  Object.entries(state.player.bag).filter(([, qty]) => qty > 0).slice(0, 6).forEach(([key, qty]) => {
-    const item = ITEMS[key];
-    const row = document.createElement("div");
-    row.className = "bag-row";
-    row.innerHTML = `<img src="${item.icon}" alt="${item.name}"><strong>${item.name}</strong><span>x${qty}</span>`;
-    bag.appendChild(row);
-  });
-  if (!bag.children.length) bag.innerHTML = `<div class="dex-mini">Mochila vazia.</div>`;
-
-  $("#dexMini").textContent = `${state.player.seen.length} vistos • ${state.player.caught.length} capturados`;
-}
-
-function currentObjective() {
-  if (state?.flags?.introActive) return "Siga a apresentação até o laboratório.";
-  if (!state?.player?.party?.length) return "Escolha seu primeiro Pokémon.";
-  if (!state.flags.rival_niko_1) return "Atravesse a Rota 01 e enfrente Niko.";
-  if (!state.flags.trainer_lia) return "Treine na Rota 01 e vença Lia.";
-  if (!state.flags.gym_coral) return "Passe pelo Amber Woods e conquiste a Insígnia Coral.";
-  if (!state.flags.gym_crystal) return "Cruze a Lumen Cave e vença o Ginásio Noxport.";
-  if (!state.flags.rival_niko_2) return "Explore North Reef e suba até o Mistpoint.";
-  return "Pós-jogo: complete a Pokédex da região Veyra.";
-}
-
-function locationProgressText(id) {
-  const loc = LOCATIONS[id];
-  const trainers = (loc.trainers || []).length;
-  const defeated = (loc.trainers || []).filter(t => state.flags[TRAINERS[t].flag]).length;
-  const wildCount = new Set((loc.wild || []).map(row => row[0])).size;
-  const locked = loc.requires?.badge && !state.player.badges.includes(loc.requires.badge);
-  return `${locked ? "bloqueado" : "aberto"} • ${defeated}/${trainers} treinadores • ${wildCount} espécies`;
-}
-
-function isRouteLike(loc) {
-  return Boolean(loc?.length && loc?.wild);
-}
-
-function routeProgress(id = state.player.location) {
-  return clamp(Number(state.routeProgress?.[id] || 0), 0, LOCATIONS[id]?.length || 0);
-}
-
-function routeRemaining(id = state.player.location) {
-  const loc = LOCATIONS[id];
-  return Math.max(0, (loc?.length || 0) - routeProgress(id));
-}
-
-function routeIsComplete(id = state.player.location) {
-  const loc = LOCATIONS[id];
-  return !isRouteLike(loc) || routeProgress(id) >= loc.length;
-}
-
-function routeProgressLabel(id = state.player.location) {
-  const loc = LOCATIONS[id];
-  if (!isRouteLike(loc)) return "área aberta";
-  return `${routeProgress(id)}/${loc.length} passos`;
-}
-
-function sceneFlash(kind = "step") {
-  const stage = $("#locationBackdrop");
-  if (!stage || !state?.settings?.motion) return;
-  stage.classList.remove("flash-step", "flash-hit", "flash-catch", "flash-faint", "battle-wipe", "battle-ripple");
-  void stage.offsetWidth;
-  stage.classList.add(kind === "hit" ? "flash-hit" : kind === "catch" ? "flash-catch" : kind === "faint" ? "flash-faint" : kind === "ripple" ? "battle-ripple" : kind === "wipe" ? "battle-wipe" : "flash-step");
-}
-
-function spriteMonForLocation(loc) {
-  if (battle) return enemyMon()?.id || null;
-  if (state?.flags?.lastWildId && loc?.wild) return state.flags.lastWildId;
-  return loc?.wild?.[0]?.[0] || null;
-}
-
-function renderOverworld() {
-  const scene = $("#pixelScene");
-  if (!scene || !state) return;
-  const loc = LOCATIONS[state.player.location];
-  const introScene = state.flags.introActive ? state.flags.introScene : null;
-  const kind = introScene || loc.kind;
-  const progress = routeProgressLabel();
-  const wildId = spriteMonForLocation(loc);
-  scene.className = `pixel-scene scene-${kind}`;
-  const road = isRouteLike(loc) ? `<div class="route-meter"><i style="width:${pct(routeProgress(), loc.length)}%"></i><span>${progress}</span></div>` : "";
-  const wild = wildId ? `<img class="scene-mon" src="${monFront(wildId)}" onerror="this.src='${monFallback(wildId)}'" alt="">` : "";
-  const labBall = kind === "lab" ? `<div class="lab-balls"><span></span><span></span><span></span></div>` : "";
-  const npc = npcSpriteForScene(kind);
-  scene.innerHTML = `
-    <div class="tile-layer"></div>
-    ${road}
-    <img class="overworld-sprite hero-sprite" src="assets/sprites/hero.gif" alt="">
-    <img class="overworld-sprite npc-sprite" src="${npc}" alt="">
-    ${wild}
-    ${labBall}
-  `;
-}
-
-function npcSpriteForScene(kind) {
-  if (kind === "lab") return "assets/sprites/professor.png";
-  if (kind === "bedroom") return "assets/sprites/mom.png";
-  const loc = LOCATIONS[state.player.location];
-  if (loc?.services?.includes("center")) return "assets/sprites/nurse.png";
-  if (loc?.services?.includes("mart")) return "assets/sprites/shopkeeper.png";
-  if ((loc?.trainers || []).some(id => id.includes("niko") && !state.flags[TRAINERS[id].flag])) return "assets/sprites/rival.png";
-  return "assets/sprites/npc.png";
-}
-
-function talkToNpc() {
-  const loc = LOCATIONS[state.player.location];
-  const pool = loc.npcs || [];
-  if (!pool.length) { say("Ninguém por perto tem algo novo para dizer."); return; }
-  const key = pick(pool);
-  say(NPC_LINES[key] || loc.text);
-}
-
-function renderActions() {
-  actionGrid.innerHTML = "";
-
-  if (battle) {
-    renderBattleActions();
-    return;
+    $('#newGameBtn').onclick = () => { audio.ensure(); audio.sfx('click'); startNewGame(); };
+    $('#continueBtn').onclick = () => { const s=load(); if(s){ state = mergeSave(s); audio.ensure(); audio.sfx('click'); showGame(); } };
+    $('#termsBtn').onclick = () => showTerms();
+  }
+  function mergeSave(s){
+    return { ...newState(), ...s, settings:{...defaultSettings, ...(s.settings||{})}, flags:{...(s.flags||{})}, bag:{...(s.bag||{})}, routeProgress:{...(s.routeProgress||{})} };
   }
 
-  if (state.flags.introActive) {
-    action("Continuar", advanceIntro, "história");
-    action("Pular intro", skipIntroToStarter, "escolher inicial");
-    return;
+  async function startNewGame(){
+    state = newState();
+    showScreen('cinematic');
+    audio.play('lab');
+    await cinematic([
+      ['professor','Este é o mundo dos Pokémon.'],
+      ['professor','Na Região Veyra, a maré muda caminhos. A neblina muda escolhas.'],
+      ['professor','Um treinador bom não anda rápido. Ele observa.'],
+      ['black','Naquela manhã, uma luz bateu na janela do seu quarto...']
+    ]);
+    state.flags.introDone = true; state.flags.woke = true;
+    showGame();
+    await say(['Você acordou em Cove. O laboratório fica a leste da praça.']);
   }
 
-  const loc = LOCATIONS[state.player.location];
-  const hasLocalMenu = Boolean(loc.services?.length);
-
-  if (isRouteLike(loc) && !routeIsComplete()) {
-    action("Avançar", advanceRoute, `${routeRemaining()} passos restantes`);
-    action("Procurar", searchWildOnly, "grama alta");
-    action("Voltar", () => travel(state.player.lastLocation || loc.exits[0]), "caminho anterior");
-    action("Menu", openGameMenu, "equipe, bolsa, dex");
-    return;
+  async function cinematic(lines){
+    const box = $('#cinematicBox');
+    for(const [who,text] of lines){
+      box.dataset.who = who;
+      box.innerHTML = `<div class="cinematic-portrait ${who}"></div><p></p>`;
+      await typeInto(box.querySelector('p'), text, state?.settings?.textSpeed ?? 22);
+      await waitForTap(box);
+    }
+  }
+  function waitForTap(node){ return new Promise(resolve => { const done=()=>{ node.removeEventListener('click', done); window.removeEventListener('keydown', done); resolve(); }; node.addEventListener('click', done); window.addEventListener('keydown', done, {once:true}); }); }
+  function typeInto(el, text, speed=22){
+    if(!state?.settings?.motion){ el.textContent = text; return Promise.resolve(); }
+    return new Promise(resolve=>{ let i=0; const tick=()=>{ el.textContent = text.slice(0,i++); if(i<=text.length) setTimeout(tick, speed); else resolve(); }; tick(); });
   }
 
-  action(loc.wild ? "Explorar" : "Olhar em volta", loc.wild ? searchWildOnly : () => say(loc.text), loc.wild ? "encontros e itens" : "descrição");
-  if (hasLocalMenu) action("Local", openLocalMenu, "serviços da cidade");
-  else action("Conversar", talkToNpc, "NPCs e dicas");
-  action("Viajar", openTravelMenu, routeIsComplete() ? "rotas conectadas" : routeProgressLabel());
-  action("Menu", openGameMenu, "equipe, bolsa, dex");
-}
+  function showGame(){
+    showScreen('game');
+    menuOpen=false; closeMenu(); closeBattle();
+    updateHud(); renderMap(); renderDialogueHint(); startMapMusic();
+  }
+  function startMapMusic(){ if(!battle) audio.play(MAPS[state.map]?.music || 'route'); }
 
-function openGameMenu() {
-  playSfx("open");
-  const loc = LOCATIONS[state.player.location];
-  const boxButton = loc.services?.includes("center") ? `<button class="choice-btn" value="box" type="submit"><strong>PC / Box</strong><small>${state.player.box.length} guardados</small></button>` : "";
-  modalContent.innerHTML = `
-    <h3>Menu</h3>
-    <div class="game-menu-grid">
-      <button class="choice-btn" value="party" type="submit"><strong>Equipe</strong><small>Pokémon, golpes e EXP</small></button>
-      <button class="choice-btn" value="bag" type="submit"><strong>Bolsa</strong><small>itens e cura</small></button>
-      <button class="choice-btn" value="dex" type="submit"><strong>Pokédex</strong><small>${state.player.caught.length} capturados</small></button>
-      <button class="choice-btn" value="journal" type="submit"><strong>Diário</strong><small>objetivo atual</small></button>
-      <button class="choice-btn" value="map" type="submit"><strong>Mapa</strong><small>${routeProgressLabel()}</small></button>
-      ${boxButton}
-      <button class="choice-btn" value="save" type="submit"><strong>Salvar</strong><small>save local</small></button>
-      <button class="choice-btn" value="settings" type="submit"><strong>Config</strong><small>texto, tema, movimento</small></button>
-    </div>
-    <div class="modal-actions"><button class="mini-btn" value="close">Fechar</button></div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const value = e.submitter?.value;
-    modal.close();
-    if (value === "party") return openPartyMenu();
-    if (value === "bag") return openBagMenu();
-    if (value === "dex") return openDex();
-    if (value === "journal") return openJournal();
-    if (value === "map") return openMap();
-    if (value === "box") return openBox();
-    if (value === "save") return saveGame(false);
-    if (value === "settings") return openSettings();
-  };
-  modal.showModal();
-}
+  function currentMap(){ return MAPS[state.map]; }
+  function tileAt(map, x, y){
+    const rows = map.rows; if(y<0 || y>=rows.length) return '#';
+    const row = rows[y]; if(x<0 || x>=row.length) return '#';
+    return row[x] || '#';
+  }
+  function isSolid(x,y){
+    const ch = tileAt(currentMap(),x,y); if(TILE[ch]?.solid) return true;
+    if(npcAt(x,y)) return true;
+    return false;
+  }
+  function visibleNpc(n){ return !n.flag || hasFlag(n.flag) || n.trainer; }
+  function npcAt(x,y){ return (currentMap().npcs || []).find(n => visibleNpc(n) && n.x===x && n.y===y && !(n.trainer && hasFlag(n.flag))); }
+  function itemAt(x,y){ return (currentMap().items || []).find(it => it.x===x && it.y===y && !state.picked[it.id]); }
+  function signAt(x,y){ return (currentMap().signs || []).find(s => s.x===x && s.y===y); }
+  function frontTile(){ const d = {up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]}[state.face]; return {x:state.x+d[0], y:state.y+d[1]}; }
 
-function openLocalMenu() {
-  playSfx("open");
-  const loc = LOCATIONS[state.player.location];
-  const options = [];
-  if (loc.services?.includes("home")) options.push(["home", "Casa", "curar equipe"]);
-  if (loc.services?.includes("lab")) options.push(["lab", "Laboratório", "Professor Aroeira"]);
-  if (loc.services?.includes("center")) options.push(["center", "Centro Pokémon", "curar equipe"]);
-  if (loc.services?.includes("mart")) options.push(["mart", "Loja", "comprar itens"]);
-  if (loc.services?.includes("gymCoral")) options.push(["gymCoral", "Ginásio Coral", "líder Dara"]);
-  if (loc.services?.includes("gymCrystal")) options.push(["gymCrystal", "Ginásio Noxport", "líder Vitor"]);
-  options.push(["talk", "Conversar", "NPCs e dicas"]);
-  modalContent.innerHTML = `
-    <h3>${loc.name}</h3>
-    <p>${loc.text}</p>
-    <div class="choice-grid">${options.map(([value, label, hint]) => `<button class="choice-btn" value="${value}" type="submit"><strong>${label}</strong><small>${hint}</small></button>`).join("")}</div>
-    <div class="modal-actions"><button class="mini-btn" value="close">Fechar</button></div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const value = e.submitter?.value;
-    modal.close();
-    if (value === "home") return healParty("Você descansou em casa.");
-    if (value === "lab") return labAction();
-    if (value === "center") return healParty("Equipe curada.");
-    if (value === "mart") return openShop();
-    if (value === "gymCoral") return startTrainerBattle("gymCoral");
-    if (value === "gymCrystal") return startTrainerBattle("gymCrystal");
-    if (value === "talk") return talkToNpc();
-  };
-  modal.showModal();
-}
-
-function openTravelMenu() {
-  playSfx("open");
-  const current = LOCATIONS[state.player.location];
-  const canExitForward = routeIsComplete();
-  const nodes = current.exits.map(id => {
-    const next = LOCATIONS[id];
-    const locked = next.requires?.badge && !state.player.badges.includes(next.requires.badge);
-    const isBack = id === state.player.lastLocation;
-    const disabled = locked || (!canExitForward && !isBack);
-    const hint = locked ? "bloqueado" : disabled ? `${routeRemaining()} passos restantes` : isBack ? "voltar" : "ir";
-    return `<button class="choice-btn" value="${id}" type="submit" ${disabled ? "disabled" : ""}><strong>${next.name}</strong><small>${hint}</small></button>`;
-  }).join("");
-  modalContent.innerHTML = `
-    <h3>Viajar</h3>
-    <p>${isRouteLike(current) ? `Progresso da área: ${routeProgressLabel()}.` : "Escolha o próximo caminho."}</p>
-    <div class="choice-grid">${nodes}</div>
-    <div class="modal-actions"><button class="mini-btn" value="map">Mapa completo</button><button class="mini-btn" value="close">Fechar</button></div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const value = e.submitter?.value;
-    modal.close();
-    if (value === "map") return openMap();
-    if (value && value !== "close") return travel(value);
-  };
-  modal.showModal();
-}
-
-function renderBattleActions() {
-  if (battle.phase === "move") {
-    activeMon().moves.forEach((slot, idx) => {
-      const move = MOVES[slot.key];
-      action(move.name, () => playerUseMove(idx), `${TYPES[move.type]} • PP ${slot.pp}/${move.pp}`);
-    });
-    action("Voltar", () => { battle.phase = "menu"; render(); }, "menu de batalha");
-    return;
+  function move(dir){
+    if(activeScreen !== 'game' || menuOpen || locks.move || locks.dialog || battle) return;
+    const delta = {up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]}[dir]; if(!delta) return;
+    state.face = dir;
+    const nx = state.x + delta[0], ny = state.y + delta[1];
+    const lock = (currentMap().exits||[]).find(e => e.at.x===nx && e.at.y===ny && !hasFlag(e.lockedFlag));
+    if(lock){ audio.sfx('bump'); say([lock.lockText]); renderMap(); return; }
+    if(isSolid(nx,ny)){ audio.sfx('bump'); renderMap(); return; }
+    state.x = nx; state.y = ny; state.steps++; audio.sfx('step');
+    if(state.repel > 0) state.repel--;
+    advanceRouteProgress();
+    renderMap(); updateHud(); checkWarp(); maybeEncounter();
   }
 
-  if (battle.phase === "bag") {
-    const usable = Object.entries(state.player.bag).filter(([key, qty]) => qty > 0 && ["ball", "heal", "status"].includes(ITEMS[key].kind));
-    usable.forEach(([key, qty]) => action(ITEMS[key].name, () => useBattleItem(key), `x${qty}`));
-    action("Voltar", () => { battle.phase = "menu"; render(); }, "menu de batalha");
-    return;
+  function advanceRouteProgress(){
+    const map = currentMap(); if(!map.minSteps) return;
+    state.routeProgress[state.map] = Math.min(map.minSteps, (state.routeProgress[state.map]||0) + 1);
   }
-
-  if (battle.phase === "switch") {
-    state.player.party.forEach((mon, idx) => {
-      const disabled = mon.hp <= 0 || idx === battle.playerIndex;
-      const btnLabel = `${mon.nickname || mon.name}`;
-      const hint = disabled ? (mon.hp <= 0 ? "desmaiado" : "em campo") : `Lv.${mon.level} • ${mon.hp}/${mon.maxHp}`;
-      const handler = disabled ? () => {} : () => switchActive(idx);
-      action(btnLabel, handler, hint);
-      actionGrid.lastChild.disabled = disabled;
-    });
-    action("Voltar", () => { battle.phase = "menu"; render(); }, "menu de batalha");
-    return;
+  function canLeaveRoute(){
+    const map = currentMap(); if(!map.minSteps) return true;
+    return (state.routeProgress[state.map]||0) >= map.minSteps;
   }
-
-  action("Lutar", () => { battle.phase = "move"; render(); }, "escolher golpe");
-  action("Mochila", () => { battle.phase = "bag"; render(); }, "itens e Poké Bolas");
-  action("Pokémon", () => { battle.phase = "switch"; render(); }, "trocar equipe");
-  action("Fugir", fleeBattle, battle.kind === "wild" ? "tentar escapar" : "não vale em batalha oficial");
-}
-
-function renderBattle() {
-  const battleView = $("#battleView");
-  const stage = $("#locationBackdrop");
-  if (!battle) {
-    battleView.hidden = true;
-    stage?.classList.remove("in-battle");
-    return;
-  }
-  battleView.hidden = false;
-  stage?.classList.add("in-battle");
-  const ally = activeMon();
-  const foe = enemyMon();
-  $("#enemySprite").src = monFront(foe.id);
-  $("#enemySprite").onerror = () => { $("#enemySprite").src = monFallback(foe.id); };
-  $("#playerSprite").src = monBack(ally.id);
-  $("#playerSprite").onerror = () => { $("#playerSprite").src = monFallback(ally.id); };
-  $("#enemyHud").innerHTML = hudHtml(foe, false, battle.enemyTeam, battle.enemyIndex);
-  $("#playerHud").innerHTML = hudHtml(ally, true, state.player.party, battle.playerIndex);
-}
-
-function hudHtml(mon, showHp = false, team = [], activeIndex = 0) {
-  const hpPercent = pct(mon.hp, mon.maxHp);
-  const expPercent = showHp ? pct(mon.exp || 0, mon.nextExp || 1) : 0;
-  const hpClass = hpPercent <= 25 ? "low" : hpPercent <= 55 ? "mid" : "";
-  return `
-    <div class="hud-top"><span>${mon.nickname || mon.name}</span><span>Lv.${mon.level}</span></div>
-    <div class="team-slots">${teamSlotsHtml(team, activeIndex)}</div>
-    <div class="hp-label"><b>HP</b><div class="hpbar ${hpClass}"><i style="width:${hpPercent}%"></i></div></div>
-    ${showHp ? `<small class="hp-number">${mon.hp}/${mon.maxHp}</small><div class="expbar"><i style="width:${expPercent}%"></i></div>` : ""}
-    ${mon.status ? `<small class="status-pill">${statusName(mon.status)}</small>` : ""}
-  `;
-}
-
-function teamSlotsHtml(team = [], activeIndex = 0) {
-  const total = Math.max(6, team.length || 0);
-  return Array.from({ length: total }, (_, idx) => {
-    const mon = team[idx];
-    const cls = mon ? (mon.hp <= 0 ? "slot fainted" : idx === activeIndex ? "slot active" : "slot filled") : "slot";
-    return `<span class="${cls}"></span>`;
-  }).join("");
-}
-
-function labAction() {
-  if (!state.flags.labGift) {
-    state.flags.labGift = true;
-    addItem("pokeBall", 4);
-    say("Aroeira: leve estas Poké Bolas. Quero ver sua Pokédex crescer de verdade.");
-    render();
-    return;
-  }
-  say("Aroeira: capture, teste tipos e volte quando tiver novas insígnias.");
-}
-
-function healParty(message) {
-  state.player.party.forEach(mon => {
-    mon.hp = mon.maxHp;
-    mon.status = null;
-    mon.moves.forEach(slot => { slot.pp = MOVES[slot.key].pp; });
-  });
-  say(message);
-  render();
-}
-
-function travel(id) {
-  const current = LOCATIONS[state.player.location];
-  const next = LOCATIONS[id];
-  if (!next) return;
-  if (next.requires?.badge && !state.player.badges.includes(next.requires.badge)) {
-    say(next.requires.message);
-    return;
-  }
-  if (isRouteLike(current) && !routeIsComplete() && id !== state.player.lastLocation) {
-    say(`Você ainda não atravessou ${current.name}. Avance mais ${routeRemaining()} passo(s).`);
-    return;
-  }
-  const previous = state.player.location;
-  state.player.location = id;
-  state.player.lastLocation = previous;
-  if (isRouteLike(next)) state.routeProgress[id] = 0;
-  state.stats.steps += 1;
-  if (state.player.repelSteps > 0) state.player.repelSteps -= 1;
-  playSfx("step");
-  sceneFlash("step");
-  say(next.text);
-  render();
-}
-
-function advanceRoute() {
-  const loc = LOCATIONS[state.player.location];
-  if (!isRouteLike(loc)) return explore();
-  if (routeIsComplete()) {
-    say(`${loc.name} já foi atravessada. Escolha Viajar para seguir caminho.`);
-    render();
-    return;
-  }
-
-  state.routeProgress[state.player.location] = routeProgress() + 1;
-  state.stats.steps += 1;
-  if (state.player.repelSteps > 0) state.player.repelSteps -= 1;
-  playSfx("step");
-  sceneFlash("step");
-
-  const undefeated = (loc.trainers || []).filter(id => !state.flags[TRAINERS[id].flag]);
-  if (undefeated.length && Math.random() < .22) {
-    startTrainerBattle(pick(undefeated));
-    return;
-  }
-
-  if (loc.items?.length && Math.random() < .16) {
-    const item = pick(loc.items);
-    addItem(item, 1);
-    say(`Passo ${routeProgress()}/${loc.length}. Você encontrou ${ITEMS[item].name}.`);
-    render();
-    return;
-  }
-
-  if (state.player.repelSteps > 0 && Math.random() < .65) {
-    say(`Passo ${routeProgress()}/${loc.length}. O Repelente manteve a grama quieta.`);
-    render();
-    return;
-  }
-
-  if (Math.random() < .68) {
-    const encounter = weightedEncounter(loc.wild);
-    state.flags.lastWildId = encounter.id;
-    startWildBattle(encounter.id, rand(encounter.min, encounter.max));
-    return;
-  }
-
-  const done = routeIsComplete();
-  say(done ? `${loc.name} foi atravessada. Agora dá para seguir pela saída.` : `Passo ${routeProgress()}/${loc.length}. Nada apareceu.`);
-  render();
-}
-
-function searchWildOnly() {
-  const loc = LOCATIONS[state.player.location];
-  if (!loc.wild) {
-    say(loc.text);
-    return;
-  }
-  if (state.player.repelSteps > 0 && Math.random() < .7) {
-    say("O Repelente manteve a grama quieta.");
-    render();
-    return;
-  }
-  const encounter = weightedEncounter(loc.wild);
-  state.flags.lastWildId = encounter.id;
-  startWildBattle(encounter.id, rand(encounter.min, encounter.max));
-}
-
-function explore() {
-  const loc = LOCATIONS[state.player.location];
-  if (isRouteLike(loc) && !routeIsComplete()) return advanceRoute();
-  if (loc.wild) return searchWildOnly();
-  say(loc.text);
-  render();
-}
-
-function weightedEncounter(table) {
-  const total = table.reduce((sum, row) => sum + row[3], 0);
-  let roll = Math.random() * total;
-  for (const [id, min, max, weight] of table) {
-    roll -= weight;
-    if (roll <= 0) return { id, min, max };
-  }
-  const [id, min, max] = table[0];
-  return { id, min, max };
-}
-
-function activeMon() { return state.player.party[battle.playerIndex]; }
-function enemyMon() { return battle.enemyTeam[battle.enemyIndex]; }
-
-function firstHealthyIndex() {
-  return state.player.party.findIndex(mon => mon.hp > 0);
-}
-
-function animateBattleSprite(kind) {
-  if (!state?.settings?.motion) return;
-  const target = kind.startsWith("enemy") ? $("#enemySprite") : $("#playerSprite");
-  if (!target) return;
-  target.classList.remove("anim-attack", "anim-hit", "anim-faint", "anim-enter");
-  void target.offsetWidth;
-  if (kind.endsWith("Attack")) target.classList.add("anim-attack");
-  if (kind.endsWith("Hit")) target.classList.add("anim-hit");
-  if (kind.endsWith("Faint")) target.classList.add("anim-faint");
-  if (kind.endsWith("Enter")) target.classList.add("anim-enter");
-}
-
-function battleTransition(kind = "wild") {
-  playSfx("battleStart");
-  sceneFlash(kind === "trainer" || kind === "gym" ? "wipe" : "ripple");
-}
-
-function startWildBattle(id, level) {
-  if (firstHealthyIndex() < 0) return whiteOut();
-  const enemy = createMon(id, level);
-  addSeen(id);
-  battleTransition("wild");
-  battle = {
-    kind: "wild",
-    enemyTeam: [enemy], enemyIndex: 0,
-    playerIndex: firstHealthyIndex(), phase: "menu",
-    log: [], turns: 1
-  };
-  say(`Um ${enemy.name} selvagem apareceu!`);
-  render();
-}
-
-function baseStarterId() {
-  const first = state?.player?.party?.[0];
-  const id = first?.id || 1;
-  if ([1, 2].includes(id)) return 1;
-  if ([4, 5].includes(id)) return 4;
-  if ([7, 8].includes(id)) return 7;
-  return 1;
-}
-
-function rivalStarterFor(id) {
-  return { 1: 4, 4: 7, 7: 1 }[id] || 4;
-}
-
-function evolvedStarter(id) {
-  return { 1: 2, 4: 5, 7: 8 }[id] || id;
-}
-
-function syncRivalTeams() {
-  const rival = rivalStarterFor(baseStarterId());
-  if (TRAINERS.niko1) TRAINERS.niko1.team = [[rival, 5]];
-  if (TRAINERS.niko2) TRAINERS.niko2.team = [[58, 18], [63, 18], [evolvedStarter(rival), 19]];
-}
-
-function startTrainerBattle(trainerId) {
-  syncRivalTeams();
-  const trainer = TRAINERS[trainerId];
-  if (state.flags[trainer.flag]) {
-    say(`${trainer.title} ${trainer.name}: já batalhamos. Continue treinando.`);
-    return;
-  }
-  if (firstHealthyIndex() < 0) return whiteOut();
-  const enemyTeam = trainer.team.map(([id, level]) => createMon(id, level));
-  enemyTeam.forEach(mon => addSeen(mon.id));
-  battleTransition(trainer.badge ? "gym" : "trainer");
-  battle = {
-    kind: trainer.badge ? "gym" : "trainer",
-    trainerId,
-    enemyTeam, enemyIndex: 0,
-    playerIndex: firstHealthyIndex(), phase: "menu",
-    log: [], turns: 1
-  };
-  say(`${trainer.title} ${trainer.name}: ${trainer.line}`);
-  render();
-}
-
-function playerUseMove(slotIndex) {
-  const ally = activeMon();
-  const foe = enemyMon();
-  const slot = ally.moves[slotIndex];
-  if (!slot || slot.pp <= 0) {
-    say("Esse golpe não tem PP.");
-    return;
-  }
-
-  let text = "";
-  if (ally.status === "paralysis" && Math.random() < .25) {
-    text = `${ally.nickname || ally.name} está paralisado e não conseguiu se mover.`;
-  } else {
-    slot.pp -= 1;
-    text = useMove(ally, foe, slot.key, false);
-  }
-
-  if (foe.hp <= 0) {
-    text += `\n${foe.name} desmaiou.`;
-    afterEnemyFainted(text);
-    return;
-  }
-
-  text += enemyTurn();
-  finishRound(text);
-}
-function enemyTurn() {
-  const foe = enemyMon();
-  const ally = activeMon();
-  if (foe.status === "paralysis" && Math.random() < .25) {
-    return `\nO ${foe.name} está paralisado e não se moveu.`;
-  }
-  const slot = chooseEnemyMove(foe, ally);
-  if (slot.pp > 0) slot.pp -= 1;
-  return `\n${useMove(foe, ally, slot.key, true)}`;
-}
-
-function chooseEnemyMove(foe, ally) {
-  const usable = foe.moves.filter(slot => slot.pp > 0);
-  const pool = usable.length ? usable : foe.moves;
-  const scored = pool.map(slot => {
-    const move = MOVES[slot.key];
-    const typeMult = move.power ? ally.types.reduce((mult, type) => mult * (TYPE_CHART[move.type]?.[type] ?? 1), 1) : .75;
-    const stab = foe.types.includes(move.type) ? 1.5 : 1;
-    return { slot, score: (move.power || 18) * typeMult * stab + Math.random() * 12 };
-  });
-  scored.sort((a, b) => b.score - a.score);
-  return scored[0]?.slot || pick(pool);
-}
-
-function finishRound(text) {
-  if (!battle) return;
-  if (activeMon().hp <= 0) {
-    afterPlayerFainted(text);
-    return;
-  }
-  if (enemyMon().hp > 0) {
-    text += endTurnStatusText(enemyMon());
-    if (enemyMon().hp <= 0) {
-      text += `\n${enemyMon().name} desmaiou.`;
-      afterEnemyFainted(text);
+  async function checkWarp(){
+    const map = currentMap();
+    const warp = (map.warps || []).find(w => w.x===state.x && w.y===state.y);
+    if(!warp) return;
+    if(map.minSteps && !canLeaveRoute() && warp.y > 1){
+      await say([`Você ainda não atravessou ${map.name}. Explore mais alguns passos.`]);
       return;
     }
+    transition('fade');
+    await sleep(260);
+    state.map = warp.to; state.x = warp.tx; state.y = warp.ty; encounterCooldown = 4;
+    updateHud(); renderMap(); startMapMusic();
   }
-  if (activeMon().hp > 0) {
-    text += endTurnStatusText(activeMon());
-    if (activeMon().hp <= 0) {
-      afterPlayerFainted(text);
-      return;
+  function maybeEncounter(){
+    if(encounterCooldown-- > 0) return;
+    const map = currentMap(); const ch = tileAt(map,state.x,state.y);
+    if(!TILE[ch]?.encounter && map.type !== 'cave' && map.type !== 'coast') return;
+    if(!map.encounters || !state.party.length || state.repel>0) return;
+    const rate = map.type === 'cave' ? .14 : map.type === 'coast' ? .11 : .095;
+    if(Math.random() > rate) return;
+    encounterCooldown = 8;
+    const enc = weighted(map.encounters); const level = enc.min + Math.floor(Math.random()*(enc.max-enc.min+1));
+    startBattle({ type:'wild', enemy: makeMon(enc.mon, level, true), source:'wild' });
+  }
+  function weighted(list){ const total=list.reduce((s,a)=>s+a.w,0); let r=Math.random()*total; for(const it of list){ r-=it.w; if(r<=0) return it; } return list[0]; }
+
+  function renderMap(){
+    const map = currentMap();
+    ctx.clearRect(0,0,VIEW_W,VIEW_H);
+    const camX = clamp(state.x*TILE_SIZE - VIEW_W/2 + TILE_SIZE/2, 0, Math.max(0, maxWidth(map)*TILE_SIZE - VIEW_W));
+    const camY = clamp(state.y*TILE_SIZE - VIEW_H/2 + TILE_SIZE/2, 0, Math.max(0, map.rows.length*TILE_SIZE - VIEW_H));
+    const sx = Math.floor(camX/TILE_SIZE), sy = Math.floor(camY/TILE_SIZE);
+    const ex = sx + Math.ceil(VIEW_W/TILE_SIZE)+1, ey = sy + Math.ceil(VIEW_H/TILE_SIZE)+1;
+    for(let y=sy; y<ey; y++) for(let x=sx; x<ex; x++) drawTile(tileAt(map,x,y), x*TILE_SIZE-camX, y*TILE_SIZE-camY, x, y);
+    (map.items||[]).forEach(it=>{ if(!state.picked[it.id]) drawItem(it.x*TILE_SIZE-camX, it.y*TILE_SIZE-camY); });
+    (map.npcs||[]).forEach(n => { if(visibleNpc(n) && !(n.trainer && hasFlag(n.flag))) drawPerson(n.x*TILE_SIZE-camX, n.y*TILE_SIZE-camY, n.role || 'npc', n.face); });
+    drawPerson(state.x*TILE_SIZE-camX, state.y*TILE_SIZE-camY, 'hero', state.face, true);
+    if(shake>0){ canvas.style.transform = `translate(${Math.sin(Date.now()/20)*2}px,0)`; shake--; } else canvas.style.transform = '';
+  }
+  function maxWidth(map){ return Math.max(...map.rows.map(r=>r.length)); }
+  function drawTile(ch, x, y, tx, ty){
+    const style = getComputedStyle(document.documentElement);
+    const colors = {
+      '.':'#d8e0a0', ',':'#9ccf6a', 'g':'#5fbf55', '#':'#796248', 'T':'#266b34', 'w':'#4aa3d8', 'p':'#d6c17f', '=':'#b78954', 'd':'#8b5a2b', 's':'#caa45a', 'b':'#6699cc', 'c':'#9c6b43', 'r':'#c85757', 'm':'#76a9c9', 'h':'#bc755a', 'l':'#796248', 'o':'#6c6a67', 'x':'#3e4558', 'f':'#89cc6a'
+    };
+    ctx.fillStyle = colors[ch] || '#d8e0a0'; ctx.fillRect(x,y,TILE_SIZE,TILE_SIZE);
+    if(ch === 'g'){ ctx.fillStyle = '#3f9d43'; for(let i=0;i<4;i++) ctx.fillRect(x+2+i*4,y+4+(i%2)*5,2,7); }
+    if(ch === 'T'){ ctx.fillStyle='#1f5c2d'; ctx.fillRect(x+1,y+1,14,12); ctx.fillStyle='#68462e'; ctx.fillRect(x+6,y+10,4,6); }
+    if(ch === 'w'){ ctx.fillStyle='#8ad4ff'; ctx.fillRect(x+2, y+5+(Math.sin((Date.now()/300)+tx)*1), 12, 2); }
+    if(ch === 'p'){ ctx.fillStyle='rgba(255,255,255,.18)'; ctx.fillRect(x+1,y+1,14,1); ctx.fillStyle='rgba(0,0,0,.08)'; ctx.fillRect(x+0,y+15,16,1); }
+    if(ch === 'h'){ ctx.fillStyle='#6c3f36'; ctx.fillRect(x+1,y+1,14,5); ctx.fillStyle='#ead69d'; ctx.fillRect(x+2,y+6,12,9); ctx.fillStyle='#4a3328'; ctx.fillRect(x+6,y+9,4,6); }
+    if(ch === 'o'){ ctx.fillStyle='#94918b'; ctx.fillRect(x+2,y+3,12,10); ctx.fillStyle='#4f4d4b'; ctx.fillRect(x+4,y+11,9,2); }
+    if(ch === 'b'){ ctx.fillStyle='#2c80ba'; ctx.fillRect(x+2,y+3,12,10); ctx.fillStyle='#fff1d6'; ctx.fillRect(x+3,y+4,6,4); }
+    if(ch === 's'){ ctx.fillStyle='#7a4d2a'; ctx.fillRect(x+7,y+6,2,10); ctx.fillStyle='#eacb68'; ctx.fillRect(x+3,y+2,10,6); }
+    if(ch === 'c'){ ctx.fillStyle='#895636'; ctx.fillRect(x+1,y+7,14,7); ctx.fillStyle='#d9a764'; ctx.fillRect(x+1,y+5,14,3); }
+    if(ch === 'm'){ ctx.fillStyle='#5287a8'; ctx.fillRect(x+2,y+2,12,12); ctx.fillStyle='#d4f1ff'; ctx.fillRect(x+4,y+4,8,4); }
+    if(ch === 'f'){ ctx.fillStyle='#ff7bb5'; ctx.fillRect(x+4,y+5,2,2); ctx.fillStyle='#ffe36a'; ctx.fillRect(x+10,y+9,2,2); }
+  }
+  function drawPerson(x,y,role,face='down',hero=false){
+    const p = TRAINER_LOOK[role] || TRAINER_LOOK.npc;
+    const bob = hero && state.settings.motion ? Math.sin(Date.now()/160)*1 : 0;
+    y += bob;
+    ctx.fillStyle='rgba(0,0,0,.22)'; ctx.fillRect(x+3,y+14,10,2);
+    ctx.fillStyle=p.hair; ctx.fillRect(x+4,y+1,8,4);
+    if(role==='hero'){ ctx.fillStyle=p.hat; ctx.fillRect(x+3,y,10,3); }
+    ctx.fillStyle='#f1c9a5'; ctx.fillRect(x+5,y+4,6,4);
+    ctx.fillStyle=p.body; ctx.fillRect(x+4,y+8,8,5);
+    ctx.fillStyle='#263238'; ctx.fillRect(x+4,y+13,3,3); ctx.fillRect(x+9,y+13,3,3);
+    if(face==='left'){ ctx.fillStyle='#111'; ctx.fillRect(x+5,y+5,1,1); } else if(face==='right'){ ctx.fillStyle='#111'; ctx.fillRect(x+10,y+5,1,1); } else { ctx.fillStyle='#111'; ctx.fillRect(x+6,y+5,1,1); ctx.fillRect(x+9,y+5,1,1); }
+  }
+  function drawItem(x,y){
+    ctx.fillStyle='rgba(0,0,0,.20)'; ctx.fillRect(x+4,y+12,8,3);
+    ctx.fillStyle='#fff'; ctx.fillRect(x+4,y+4,8,8); ctx.fillStyle='#d84343'; ctx.fillRect(x+4,y+4,8,4); ctx.fillStyle='#222'; ctx.fillRect(x+4,y+7,8,2); ctx.fillStyle='#fff'; ctx.fillRect(x+7,y+6,2,2);
+  }
+
+  function updateHud(){
+    const map = currentMap();
+    $('#locName').textContent = map.name;
+    $('#moneyText').textContent = `₽ ${state.money}`;
+    $('#questText').textContent = state.quest;
+    $('#partyHud').innerHTML = state.party.map((m,i)=>`<span class="mini-ball ${m.hp<=0?'fainted':''}" title="${m.name} Lv.${m.level}"></span>`).join('') || '<small>sem parceiro</small>';
+    const mapProgress = map.minSteps ? Math.floor(((state.routeProgress[state.map]||0)/map.minSteps)*100) : 100;
+    $('#routeProgress').style.width = `${clamp(mapProgress,0,100)}%`;
+    $('#routeProgressWrap').hidden = !map.minSteps;
+  }
+
+  async function say(lines){
+    locks.dialog = true;
+    const box = $('#dialogue'); box.classList.add('show');
+    for(const line of lines){
+      box.innerHTML = '<p></p><span class="continue">toque</span>';
+      await typeInto(box.querySelector('p'), line, state.settings.textSpeed);
+      await waitForTap(box);
     }
+    box.classList.remove('show'); locks.dialog = false; renderDialogueHint();
   }
-  battle.turns += 1;
-  battle.phase = "menu";
-  say(text);
-  render();
-}
+  function renderDialogueHint(){ $('#dialogue').innerHTML = '<p>Use o direcional. A: interagir. B: menu.</p>'; }
 
-function endTurnStatusText(mon) {
-  if (!mon?.status || mon.hp <= 0) return "";
-  if (!["poison", "burn"].includes(mon.status)) return "";
-  const damage = clamp(Math.floor(mon.maxHp / 8), 1, mon.hp);
-  mon.hp = clamp(mon.hp - damage, 0, mon.maxHp);
-  return `\n${mon.nickname || mon.name} sofreu com ${statusName(mon.status).toLowerCase()}.`;
-}
-function useMove(attacker, defender, moveKey, enemySide) {
-  const move = MOVES[moveKey];
-  const who = enemySide ? `O ${attacker.name}` : `${attacker.nickname || attacker.name}`;
-  if (Math.random() * 100 > move.acc) return `${who} usou ${move.name}, mas errou.`;
+  async function interact(){
+    if(activeScreen !== 'game' || menuOpen || locks.dialog || battle) return;
+    audio.ensure(); audio.sfx('click');
+    const f = frontTile();
+    const npc = npcAt(f.x,f.y) || npcAt(state.x,state.y);
+    if(npc){ await handleNpc(npc); return; }
+    const item = itemAt(state.x,state.y) || itemAt(f.x,f.y);
+    if(item){ state.picked[item.id]=true; addItem(item.item,item.qty); await say([`Você encontrou ${item.qty}× ${ITEMS[item.item].name}.`]); updateHud(); renderMap(); return; }
+    const sign = signAt(f.x,f.y); if(sign){ await say([sign.text]); return; }
+    const ch = tileAt(currentMap(), f.x, f.y);
+    if(TILE[ch]?.water && state.keyItems.oldrod){ fish(); return; }
+    await say(['Nada interessante aqui.']);
+  }
 
-  if (!move.power) {
-    if (move.effect === "atkDown") {
-      defender.temp.atk = clamp((defender.temp.atk || 0) - 1, -3, 3);
-      return `${who} usou ${move.name}. Ataque de ${defender.name} caiu.`;
+  async function handleNpc(npc){
+    if(npc.trainer && !hasFlag(npc.flag)){ await say(npc.before || [`${npc.name} quer batalhar!`]); startBattle({type:'trainer', trainer:npc, enemyTeam:npc.team.map(t=>makeMon(t.mon,t.level,true))}); return; }
+    if(npc.script === 'professorIntro'){ await professorScript(); return; }
+    if(npc.script === 'heal'){ healAll(); audio.sfx('heal'); await say(['Seus Pokémon foram restaurados.', 'Volte sempre que precisar.']); saveSilent(); updateHud(); return; }
+    if(npc.script === 'shop'){ openShop(); return; }
+    const lines = (npc.afterFlag && hasFlag(npc.afterFlag) && npc.afterLines) ? npc.afterLines : (npc.lines || ['...']);
+    await say(lines);
+    if(npc.gift && !hasFlag(npc.gift.once) && (!npc.afterFlag || hasFlag(npc.afterFlag))){ addItem(npc.gift.item,npc.gift.qty); setFlag(npc.gift.once); await say([`Você recebeu ${npc.gift.qty}× ${ITEMS[npc.gift.item].name}.`]); }
+  }
+
+  async function professorScript(){
+    if(!hasFlag('starterChosen')){
+      await say(['Você veio. Bom.', 'Não vou te entregar um discurso gigante.', 'Escolha um parceiro. Depois prove que sabe cuidar dele.']);
+      openStarterModal(); return;
     }
-    if (move.effect === "defDown") {
-      defender.temp.def = clamp((defender.temp.def || 0) - 1, -3, 3);
-      return `${who} usou ${move.name}. Defesa de ${defender.name} caiu.`;
-    }
-    if (move.effect === "atkUp") {
-      attacker.temp.atk = clamp((attacker.temp.atk || 0) + 1, -3, 3);
-      return `${who} usou ${move.name}. Ataque de ${attacker.nickname || attacker.name} subiu.`;
-    }
-    return `${who} usou ${move.name}.`;
+    await say(['Registre tudo na Dex. Vitória sem observação vira sorte.']);
   }
-
-  const atkStage = 1 + ((attacker.temp.atk || 0) * .25);
-  const defStage = 1 + ((defender.temp.def || 0) * .25);
-  const stab = attacker.types.includes(move.type) ? 1.5 : 1;
-  const typeMult = defender.types.reduce((mult, type) => mult * (TYPE_CHART[move.type]?.[type] ?? 1), 1);
-  const random = (rand(88, 100) / 100);
-  const burnDrop = attacker.status === "burn" && move.kind === "physical" ? .5 : 1;
-  const crit = Math.random() < .0625 ? 1.5 : 1;
-  const attack = Math.max(1, attacker.stats.atk * atkStage * burnDrop);
-  const defense = Math.max(1, defender.stats.def * defStage);
-  const raw = (((2 * attacker.level / 5 + 2) * move.power * (attack / defense)) / 50 + 2) * stab * typeMult * random * crit;
-  const damage = typeMult === 0 ? 0 : clamp(Math.floor(raw), 1, defender.hp);
-  defender.hp = clamp(defender.hp - damage, 0, defender.maxHp);
-  animateBattleSprite(enemySide ? "enemyAttack" : "playerAttack");
-  if (damage > 0) {
-    playSfx("hit");
-    animateBattleSprite(enemySide ? "playerHit" : "enemyHit");
-    sceneFlash("hit");
-  }
-
-  let text = `${who} usou ${move.name}. Causou ${damage} de dano.`;
-  if (crit > 1) text += " Golpe crítico.";
-  if (typeMult > 1) text += " É super efetivo.";
-  if (typeMult > 0 && typeMult < 1) text += " Não foi muito efetivo.";
-  if (typeMult === 0) text += " Não afetou.";
-
-  if (move.drain && damage > 0) {
-    const heal = Math.ceil(damage * move.drain);
-    attacker.hp = clamp(attacker.hp + heal, 0, attacker.maxHp);
-    text += ` ${attacker.name} recuperou HP.`;
-  }
-
-  if (move.status && !defender.status && Math.random() < move.effectChance) {
-    defender.status = move.status;
-    text += ` ${defender.name} ficou com ${statusName(move.status).toLowerCase()}.`;
-  }
-  return text;
-}
-
-function afterEnemyFainted(text) {
-  playSfx("faint");
-  animateBattleSprite("enemyFaint");
-  const defeated = enemyMon();
-  const gained = Math.floor((pokemonData(defeated.id).exp * defeated.level) / 7);
-  text += gainExp(activeMon(), gained);
-
-  if (battle.enemyIndex < battle.enemyTeam.length - 1) {
-    battle.enemyIndex += 1;
-    addSeen(enemyMon().id);
-    battle.phase = "menu";
-    text += `\n${TRAINERS[battle.trainerId].name} enviou ${enemyMon().name}.`;
-    say(text);
-    render();
-    return;
-  }
-
-  finishBattleWin(text);
-}
-
-function gainExp(mon, amount) {
-  mon.exp += amount;
-  let text = `\n${mon.nickname || mon.name} ganhou ${amount} EXP.`;
-  while (mon.exp >= mon.nextExp) {
-    mon.exp -= mon.nextExp;
-    mon.level += 1;
-    mon.nextExp = expToNext(mon.level);
-    refreshMon(mon);
-    text += `\n${mon.nickname || mon.name} subiu para o Lv.${mon.level}.`;
-    const evo = EVOLUTIONS[mon.id];
-    if (evo && mon.level >= evo.level) {
-      const old = mon.name;
-      mon.id = evo.to;
-      refreshMon(mon);
-      mon.hp = mon.maxHp;
-      addSeen(mon.id);
-      addCaught(mon.id);
-      text += `\n${old} evoluiu para ${mon.name}.`;
-    }
-  }
-  return text;
-}
-
-function finishBattleWin(text) {
-  playSfx("win");
-  if (battle.kind === "wild") {
-    battle = null;
-    state.stats.wins += 1;
-    say(`${text}\nVitória.`);
-    render();
-    return;
-  }
-
-  const trainer = TRAINERS[battle.trainerId];
-  state.flags[trainer.flag] = true;
-  state.player.money += trainer.money;
-  state.stats.wins += 1;
-
-  let ending = `${text}\nVocê venceu ${trainer.title} ${trainer.name} e recebeu ₽ ${trainer.money}.`;
-  if (trainer.badge && !state.player.badges.includes(trainer.badge)) {
-    state.player.badges.push(trainer.badge);
-    ending += `\nVocê recebeu a ${trainer.badgeName}.`;
-    if (trainer.badge === "coral") ending += `\n${STORY_BEATS.firstBadge}`;
-    if (trainer.badge === "crystal") ending += `\n${STORY_BEATS.secondBadge}`;
-  }
-  battle = null;
-  say(ending);
-  render();
-}
-
-function afterPlayerFainted(text) {
-  playSfx("faint");
-  sceneFlash("faint");
-  animateBattleSprite("playerFaint");
-  const next = firstHealthyIndex();
-  if (next >= 0) {
-    battle.playerIndex = next;
-    battle.phase = "menu";
-    say(`${text}\nVá, ${activeMon().name}!`);
-    render();
-    return;
-  }
-  battle = null;
-  state.stats.whites += 1;
-  const loss = Math.floor(state.player.money * .12);
-  state.player.money -= loss;
-  state.player.location = "brisa";
-  healParty("whiteout");
-  say(`${text}\nVocê apagou e voltou para Cove. Perdeu ₽ ${loss}.`);
-  render();
-}
-
-function whiteOut() {
-  state.player.location = "brisa";
-  healParty("Sua equipe foi curada em Cove.");
-}
-
-function useBattleItem(key) {
-  const item = ITEMS[key];
-  if (!item || (state.player.bag[key] || 0) <= 0) return;
-
-  if (item.kind === "ball") {
-    if (battle.kind !== "wild") {
-      say("Não dá para capturar Pokémon de outro treinador.");
-      return;
-    }
-    state.player.bag[key] -= 1;
-    const foe = enemyMon();
-    const hpFactor = 1 - (foe.hp / foe.maxHp) * .72;
-    const statusBonus = foe.status ? .14 : 0;
-    const chance = clamp((pokemonData(foe.id).catchRate / 255) * item.catchBonus * (.28 + hpFactor) + statusBonus, .04, .94);
-    if (Math.random() < chance) {
-      addCaught(foe.id);
-      state.stats.captures += 1;
-      const caught = JSON.parse(JSON.stringify(foe));
-      caught.uid = uid();
-      caught.temp = { atk: 0, def: 0 };
-      const sentToBox = state.player.party.length >= 6;
-      if (sentToBox) state.player.box.push(caught);
-      else state.player.party.push(caught);
-      battle = null;
-      playSfx("catch");
-      sceneFlash("catch");
-      say(`${item.name} balançou... clicou!\n${foe.name} foi capturado.${sentToBox ? " Foi enviado para o Box." : ""}`);
-      render();
-      return;
-    }
-    playSfx("fail");
-    let text = `${item.name} balançou... ${foe.name} escapou.`;
-    text += enemyTurn();
-    finishRound(text);
-    return;
-  }
-
-  if (item.kind === "heal") {
-    choosePokemon("Usar em qual Pokémon?", mon => mon.hp > 0 && mon.hp < mon.maxHp, idx => {
-      const mon = state.player.party[idx];
-      state.player.bag[key] -= 1;
-      mon.hp = clamp(mon.hp + item.amount, 0, mon.maxHp);
-      playSfx("heal");
-      let text = `${item.name} restaurou HP de ${mon.nickname || mon.name}.`;
-      text += enemyTurn();
-      finishRound(text);
-    });
-    return;
-  }
-
-  if (item.kind === "status") {
-    choosePokemon("Curar qual Pokémon?", mon => item.cures.includes(mon.status), idx => {
-      const mon = state.player.party[idx];
-      state.player.bag[key] -= 1;
-      mon.status = null;
-      let text = `${item.name} curou ${mon.nickname || mon.name}.`;
-      text += enemyTurn();
-      finishRound(text);
+  function openStarterModal(){
+    const modal = $('#modal'); modal.classList.add('open');
+    modal.innerHTML = `<div class="modal-card starter-card"><h2>Escolha seu parceiro</h2><div class="starter-grid">${STARTERS.map(s=>`
+      <button class="starter" data-mon="${s.mon}"><img src="${crystalSprite(DEX[s.mon].id)}" onerror="this.src='${defaultSprite(DEX[s.mon].id)}'"/><b>${DEX[s.mon].name}</b><small>${s.text}</small></button>`).join('')}</div></div>`;
+    modal.querySelectorAll('.starter').forEach(btn=>btn.onclick=async()=>{
+      const mon = btn.dataset.mon; modal.classList.remove('open'); modal.innerHTML='';
+      addPokemon(makeMon(mon,5,false)); addItem('dex',1); addItem('pokeball',5); state.money=300;
+      setFlag('starterChosen'); state.quest = 'Atravesse a Rota 01, vença Niko e chegue ao Bosque Baixo.';
+      audio.sfx('level'); updateHud(); saveSilent(); renderMap();
+      await say([`${DEX[mon].name} entrou para sua equipe.`, 'Você recebeu a Veyra Dex e 5 Poké Balls.', 'Agora sim: a rota ao sul está liberada.']);
     });
   }
-}
 
-function switchActive(idx) {
-  if (idx === battle.playerIndex || state.player.party[idx].hp <= 0) return;
-  battle.playerIndex = idx;
-  let text = `Volte! Vá, ${activeMon().nickname || activeMon().name}.`;
-  text += enemyTurn();
-  finishRound(text);
-}
-
-function fleeBattle() {
-  if (battle.kind !== "wild") {
-    say("Não dá para fugir de uma batalha oficial.");
-    return;
+  function fish(){
+    const table = [{mon:'magikarp',min:5,max:8,w:80},{mon:'tentacool',min:7,max:10,w:20}];
+    if(Math.random()<.55) say(['Nem uma mordida...']); else { const enc = weighted(table); startBattle({type:'wild', enemy:makeMon(enc.mon, enc.min + Math.floor(Math.random()*(enc.max-enc.min+1)), true), source:'fish'}); }
   }
-  const ally = activeMon();
-  const foe = enemyMon();
-  const chance = clamp(.42 + ((ally.stats.spd - foe.stats.spd) / 120), .18, .9);
-  if (Math.random() < chance) {
-    battle = null;
-    say("Você fugiu com segurança.");
-    render();
-  } else {
-    let text = "Não deu para fugir.";
-    text += enemyTurn();
-    finishRound(text);
+
+  function transition(type='fade'){
+    const t = $('#transition'); t.className = `transition ${type} play`; setTimeout(()=>t.className='transition', 520);
   }
-}
+  function toast(text){ const t=$('#toast'); t.textContent=text; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1500); }
+  function saveSilent(){ localStorage.setItem(SAVE_KEY, JSON.stringify(state)); }
 
-function statusName(status) {
-  return { poison: "Veneno", paralysis: "Paralisia", burn: "Queimadura" }[status] || status;
-}
+  function openMenu(section='party'){
+    if(battle || activeScreen !== 'game') return;
+    menuOpen=true; menuSection=section; audio.sfx('click');
+    $('#menu').classList.add('open'); renderMenu();
+  }
+  function closeMenu(){ menuOpen=false; $('#menu').classList.remove('open'); }
+  function renderMenu(){
+    $('#menu').innerHTML = `<div class="menu-card">
+      <header><b>Menu</b><button id="closeMenu">×</button></header>
+      <nav class="menu-nav">
+        ${buttonTab('party','● Equipe')}${buttonTab('bag','▣ Bolsa')}${buttonTab('dex','◇ Dex')}${buttonTab('quest','★ Jornada')}${buttonTab('settings','⚙ Config')}${buttonTab('terms','© Termos')}
+      </nav>
+      <section id="menuBody"></section>
+    </div>`;
+    $('#closeMenu').onclick = closeMenu;
+    $$('.menu-nav button').forEach(btn=>btn.onclick=()=>{ menuSection=btn.dataset.section; renderMenu(); });
+    renderMenuBody();
+  }
+  function buttonTab(id,label){ return `<button data-section="${id}" class="${menuSection===id?'active':''}">${label}</button>`; }
+  function renderMenuBody(){
+    const body = $('#menuBody');
+    if(menuSection==='party') body.innerHTML = renderParty();
+    if(menuSection==='bag') body.innerHTML = renderBag();
+    if(menuSection==='dex') body.innerHTML = renderDex();
+    if(menuSection==='quest') body.innerHTML = renderQuest();
+    if(menuSection==='settings') body.innerHTML = renderSettings();
+    if(menuSection==='terms') body.innerHTML = renderTermsHtml();
+    bindMenuActions();
+  }
+  function renderParty(){
+    if(!state.party.length) return '<p class="empty">Nenhum Pokémon na equipe.</p>';
+    return `<div class="party-list">${state.party.map((m,i)=>`
+      <article class="party-card ${m.hp<=0?'fainted':''}">
+        <img src="${crystalSprite(DEX[m.mon].id)}" onerror="this.src='${defaultSprite(DEX[m.mon].id)}'">
+        <div><b>${m.name}</b><span>Lv.${m.level} ${m.status?`· ${m.status}`:''}</span><div class="hp"><i style="width:${(m.hp/m.maxHp)*100}%"></i></div><small>${m.hp}/${m.maxHp} HP · EXP ${m.exp}/${m.next}</small></div>
+        <button data-summary="${i}">Golpes</button>
+      </article>`).join('')}</div><div class="menu-actions"><button id="saveBtn">Salvar</button><button id="healDebug">Organizar Box</button></div>`;
+  }
+  function renderBag(){
+    const entries = Object.entries(state.bag);
+    const keys = Object.keys(state.keyItems);
+    return `<div class="bag-grid">${entries.length?entries.map(([id,qty])=>bagItem(id,qty)).join(''):'<p class="empty">Bolsa vazia.</p>'}</div>
+      <h3>Itens-chave</h3><div class="key-grid">${keys.length?keys.map(id=>bagItem(id,'')).join(''):'<p class="empty">Nenhum item-chave.</p>'}</div>`;
+  }
+  function bagItem(id,qty){ const it=ITEMS[id]; return `<article class="bag-item"><img src="${it.icon}"/><b>${it.name}</b><small>${it.desc}</small><span>${qty?`×${qty}`:''}</span></article>`; }
+  function renderDex(){
+    const mons = Object.keys(DEX).filter(k => state.seen[k] || state.caught[k] || ['bulbasaur','charmander','squirtle'].includes(k));
+    return `<div class="dex-grid">${mons.map(k=>{ const d=DEX[k], seen=state.seen[k]||state.caught[k], caught=state.caught[k]; return `<button class="dex-card ${caught?'caught':seen?'seen':'unknown'}" data-dex="${k}"><img src="${seen?crystalSprite(d.id):''}" onerror="this.src='${defaultSprite(d.id)}'"><b>${seen?d.name:'????'}</b><small>${caught?'Capturado':seen?'Visto':'Desconhecido'}</small></button>`; }).join('')}</div>`;
+  }
+  function renderQuest(){
+    return `<div class="quest-card"><h3>Jornada atual</h3><p>${state.quest}</p><div class="badge-row"><span class="badge ${state.badges.includes('beaconBadge')?'got':''}">Beacon</span></div><dl><dt>Passos</dt><dd>${state.steps}</dd><dt>Capturados</dt><dd>${Object.keys(state.caught).length}</dd><dt>Vitórias</dt><dd>${state.stats.wins}</dd><dt>Dinheiro</dt><dd>₽ ${state.money}</dd></dl><div class="menu-actions"><button id="saveBtn">Salvar</button><button id="eraseBtn">Apagar save</button></div></div>`;
+  }
+  function renderSettings(){
+    return `<div class="settings-list">
+      ${toggle('music','Música')}${toggle('sfx','Efeitos')}${toggle('motion','Animações')}
+      <label>Volume <input id="volumeInput" type="range" min="0" max="1" step="0.05" value="${state.settings.volume}"></label>
+      <label>Texto <select id="textSpeed"><option value="12">Rápido</option><option value="22">Normal</option><option value="38">Lento</option></select></label>
+      <button id="saveBtn">Salvar</button>
+    </div>`;
+  }
+  function toggle(id,label){ return `<label class="switch"><span>${label}</span><input data-setting="${id}" type="checkbox" ${state.settings[id]?'checked':''}></label>`; }
+  function renderTermsHtml(){
+    return `<div class="terms"><h3>Termos de uso</h3><p>Projeto fã, individual, gratuito e não comercial, feito para estudo e portfólio.</p><p>Pokémon, nomes, sprites de Pokémon, itens, marcas e elementos relacionados pertencem aos seus respectivos proprietários: Nintendo, The Pokémon Company, Creatures Inc. e GAME FREAK.</p><p>Este projeto não é afiliado, endossado ou aprovado por essas empresas.</p><p>Sprites de Pokémon e itens são carregados do repositório público PokeAPI/sprites. Mapas, tiles, NPCs e interface desta versão são recriações autorais em pixel art para evitar redistribuição de material ripado de ROM.</p></div>`;
+  }
+  function bindMenuActions(){
+    $('#saveBtn') && ($('#saveBtn').onclick = save);
+    $('#eraseBtn') && ($('#eraseBtn').onclick = async()=>{ if(confirm('Apagar o save local?')) eraseSave(); });
+    $$('#menuBody [data-summary]').forEach(btn=>btn.onclick=()=>showSummary(+btn.dataset.summary));
+    $$('#menuBody [data-dex]').forEach(btn=>btn.onclick=()=>showDexDetail(btn.dataset.dex));
+    $$('#menuBody [data-setting]').forEach(inp=>inp.onchange=()=>{ state.settings[inp.dataset.setting]=inp.checked; if(inp.dataset.setting==='music') inp.checked?startMapMusic():audio.stop(); saveSilent(); });
+    $('#volumeInput') && ($('#volumeInput').oninput=e=>{ state.settings.volume=+e.target.value; audio.setVolume(state.settings.volume); saveSilent(); });
+    $('#textSpeed') && ($('#textSpeed').value = String(state.settings.textSpeed));
+    $('#textSpeed') && ($('#textSpeed').onchange=e=>{ state.settings.textSpeed=+e.target.value; saveSilent(); });
+  }
+  function showSummary(i){
+    const m=state.party[i];
+    $('#modal').classList.add('open');
+    $('#modal').innerHTML = `<div class="modal-card summary"><button class="x">×</button><div class="summary-head"><img src="${crystalSprite(DEX[m.mon].id)}" onerror="this.src='${defaultSprite(DEX[m.mon].id)}'"><div><h2>${m.name}</h2><p>Lv.${m.level} · ${DEX[m.mon].types.map(t=>TYPES[t].label).join('/')}</p></div></div><div class="stat-grid"><span>HP ${m.hp}/${m.maxHp}</span><span>ATK ${m.stats.atk}</span><span>DEF ${m.stats.def}</span><span>VEL ${m.stats.spd}</span></div><h3>Golpes</h3><div class="move-list">${m.moves.map(mm=>`<article><b>${MOVES[mm.id].name}</b><small>${TYPES[MOVES[mm.id].type].label} · PP ${mm.pp}/${MOVES[mm.id].pp} · Poder ${MOVES[mm.id].power || '-'}</small></article>`).join('')}</div></div>`;
+    $('#modal .x').onclick=()=>$('#modal').classList.remove('open');
+  }
+  function showDexDetail(k){
+    const d=DEX[k]; const seen = state.seen[k] || state.caught[k];
+    $('#modal').classList.add('open');
+    $('#modal').innerHTML = `<div class="modal-card summary"><button class="x">×</button><div class="summary-head"><img src="${seen?crystalSprite(d.id):''}" onerror="this.src='${defaultSprite(d.id)}'"><div><h2>${seen?d.name:'????'}</h2><p>${d.types.map(t=>TYPES[t].label).join(' / ')}</p></div></div><p>${seen?`Habitat: ${d.habitat}`:'Você ainda não viu este Pokémon.'}</p><h3>Golpes conhecidos</h3><div class="move-list">${(LEARNSETS[k]||[]).map(([lvl,id])=>`<article><b>Lv.${lvl} ${MOVES[id].name}</b><small>${TYPES[MOVES[id].type].label} · Poder ${MOVES[id].power||'-'}</small></article>`).join('')}</div></div>`;
+    $('#modal .x').onclick=()=>$('#modal').classList.remove('open');
+  }
 
-function addItem(key, qty) {
-  state.player.bag[key] = (state.player.bag[key] || 0) + qty;
-}
+  function openShop(){
+    const stock = ['pokeball','greatball','potion','superpotion','antidote','burnheal','repel','escape'];
+    $('#modal').classList.add('open');
+    $('#modal').innerHTML = `<div class="modal-card shop"><button class="x">×</button><h2>Loja de Noxport</h2><p>Dinheiro: ₽ ${state.money}</p><div class="shop-grid">${stock.map(id=>`<button data-buy="${id}"><img src="${ITEMS[id].icon}"><b>${ITEMS[id].name}</b><span>₽ ${ITEMS[id].price}</span></button>`).join('')}</div></div>`;
+    $('#modal .x').onclick=()=>$('#modal').classList.remove('open');
+    $$('#modal [data-buy]').forEach(btn=>btn.onclick=()=>{ const id=btn.dataset.buy, price=ITEMS[id].price; if(state.money<price){ toast('Dinheiro insuficiente.'); return; } state.money-=price; addItem(id,1); audio.sfx('click'); updateHud(); openShop(); });
+  }
 
-function removeItem(key, qty) {
-  state.player.bag[key] = clamp((state.player.bag[key] || 0) - qty, 0, 999);
-}
-
-function openShop() {
-  playSfx("open");
-  const stock = state.player.badges.includes("crystal")
-    ? ["pokeBall", "greatBall", "potion", "superPotion", "antidote", "paralyzeHeal", "repel", "escapeRope"]
-    : state.player.badges.includes("coral")
-      ? ["pokeBall", "potion", "superPotion", "antidote", "paralyzeHeal", "repel", "escapeRope"]
-      : ["pokeBall", "potion", "antidote", "paralyzeHeal"];
-  modalContent.innerHTML = `
-    <h3>Loja</h3>
-    <p>Dinheiro: ₽ ${state.player.money}</p>
-    <div class="choice-grid shop-grid">
-      ${stock.map(key => {
-        const item = ITEMS[key];
-        return `<button class="choice-btn" value="${key}" type="submit"><img src="${item.icon}" alt="${item.name}"><strong>${item.name}</strong><small>₽ ${item.price}</small></button>`;
-      }).join("")}
-    </div>
-    <div class="modal-actions"><button class="mini-btn" value="close">Fechar</button></div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const key = e.submitter?.value;
-    if (!key || key === "close") return modal.close();
-    const item = ITEMS[key];
-    if (state.player.money < item.price) {
-      say("Dinheiro insuficiente.");
-      modal.close();
-      return;
+  function startBattle(opts){
+    if(battle) return;
+    transition(opts.type==='trainer'?'wipe':'swirl'); audio.sfx('start');
+    setTimeout(()=>{
+      const player = activeMon(); if(!player || player.hp<=0){ say(['Você não tem Pokémon apto.']); return; }
+      battle = { ...opts, player, enemyIndex:0, enemy: opts.enemy || opts.enemyTeam[0], log:[], phase:'action', enemyTeam: opts.enemyTeam || null, trainer: opts.trainer || null };
+      state.seen[battle.enemy.mon]=true;
+      showBattle();
+    }, 380);
+  }
+  function showBattle(){
+    audio.play('battle'); showScreen('battle'); renderBattle('action');
+  }
+  function closeBattle(){ battle=null; $('#battleScreen')?.classList.remove('is-active'); if(activeScreen==='battle') showScreen('game'); }
+  function renderBattle(mode='action'){
+    if(!battle) return;
+    const p=battle.player, e=battle.enemy;
+    $('#battleScreen').innerHTML = `<div class="battle-stage ${battle.type}">
+      <div class="enemy-box combatant"><div class="nameplate"><b>${e.name}</b><span>Lv.${e.level}</span></div><div class="hp enemy-hp"><i style="width:${hpPct(e)}%"></i></div><img class="mon-sprite enemy-sprite" src="${crystalSprite(DEX[e.mon].id)}" onerror="this.src='${defaultSprite(DEX[e.mon].id)}'"></div>
+      <div class="player-box combatant"><img class="mon-sprite player-sprite" src="${crystalSprite(DEX[p.mon].id)}" onerror="this.src='${defaultSprite(DEX[p.mon].id)}'"><div class="player-panel"><div class="nameplate"><b>${p.name}</b><span>Lv.${p.level}</span></div><div class="hp player-hp"><i style="width:${hpPct(p)}%"></i></div><small>${p.hp}/${p.maxHp} HP</small><div class="xp"><i style="width:${clamp((p.exp/p.next)*100,0,100)}%"></i></div><div class="balls">${state.party.map(m=>`<span class="mini-ball ${m.hp<=0?'fainted':''}"></span>`).join('')}</div></div></div>
+      <div class="battle-dialog"><p id="battleText">${lastBattleText()}</p><div id="battleActions">${battleActions(mode)}</div></div>
+    </div>`;
+    bindBattleButtons(mode);
+  }
+  function hpPct(m){ return clamp((m.hp/m.maxHp)*100,0,100); }
+  function lastBattleText(){ if(!battle.log.length) return battle.type==='wild'?`Um ${battle.enemy.name} selvagem apareceu!`:`${battle.trainer.name} enviou ${battle.enemy.name}!`; return battle.log[battle.log.length-1]; }
+  function battleActions(mode){
+    if(mode==='moves') return `<div class="move-buttons">${battle.player.moves.map((m,i)=>`<button data-move="${i}" ${m.pp<=0?'disabled':''}><b>${MOVES[m.id].name}</b><small>${TYPES[MOVES[m.id].type].label} · ${m.pp}/${MOVES[m.id].pp}</small></button>`).join('')}<button data-back>Voltar</button></div>`;
+    if(mode==='bag') return `<div class="item-buttons">${['pokeball','greatball','potion','superpotion','antidote','burnheal'].filter(id=>state.bag[id]).map(id=>`<button data-use="${id}"><img src="${ITEMS[id].icon}">${ITEMS[id].name} ×${state.bag[id]}</button>`).join('') || '<button disabled>Bolsa vazia</button>'}<button data-back>Voltar</button></div>`;
+    if(mode==='switch') return `<div class="switch-buttons">${state.party.map((m,i)=>`<button data-switch="${i}" ${m.hp<=0 || m.uid===battle.player.uid?'disabled':''}><img src="${crystalSprite(DEX[m.mon].id)}">${m.name} Lv.${m.level}</button>`).join('')}<button data-back>Voltar</button></div>`;
+    return `<button data-mode="moves">⚔ Lutar</button><button data-mode="bag">▣ Bolsa</button><button data-mode="switch">● Pokémon</button><button data-run>↙ Fugir</button>`;
+  }
+  function bindBattleButtons(mode){
+    $$('#battleActions [data-mode]').forEach(b=>b.onclick=()=>renderBattle(b.dataset.mode));
+    $$('#battleActions [data-back]').forEach(b=>b.onclick=()=>renderBattle('action'));
+    $$('#battleActions [data-move]').forEach(b=>b.onclick=()=>playerAttack(+b.dataset.move));
+    $$('#battleActions [data-use]').forEach(b=>b.onclick=()=>useBattleItem(b.dataset.use));
+    $$('#battleActions [data-switch]').forEach(b=>b.onclick=()=>switchMon(+b.dataset.switch));
+    $('#battleActions [data-run]') && ($('#battleActions [data-run]').onclick=runBattle);
+  }
+  async function battleMessage(text, rerender=true){ battle.log.push(text); if(rerender) renderBattle('locked'); await sleep(state.settings.motion?760:120); }
+  function calcMult(moveType, targetTypes){ return targetTypes.reduce((m,t)=>m*((TYPE_CHART[moveType] && TYPE_CHART[moveType][t] !== undefined) ? TYPE_CHART[moveType][t] : 1),1); }
+  function calcDamage(attacker, defender, move){
+    if(!move.power) return { dmg:0, mult:1, crit:false };
+    const mult = calcMult(move.type, DEX[defender.mon].types);
+    if(mult===0) return { dmg:0, mult, crit:false };
+    const crit = Math.random() < .07;
+    const varr = .88 + Math.random()*.18;
+    let power = move.variable ? move.power + Math.floor(Math.random()*40)-20 : move.power;
+    const raw = (((((2*attacker.level/5)+2)*power*(attacker.stats.atk/Math.max(1,defender.stats.def)))/50)+2) * mult * varr * (crit?1.7:1);
+    return { dmg: Math.max(1, Math.floor(raw)), mult, crit };
+  }
+  async function playerAttack(idx){
+    if(locks.battle) return; locks.battle=true;
+    const p=battle.player, moveRef=p.moves[idx], move=MOVES[moveRef.id];
+    if(moveRef.pp<=0){ locks.battle=false; return; }
+    moveRef.pp--; await performMove(p,battle.enemy,move,'player');
+    if(battle.enemy.hp<=0){ await enemyFainted(); locks.battle=false; return; }
+    await enemyTurn(); locks.battle=false;
+  }
+  async function performMove(attacker, defender, move, side){
+    await battleMessage(`${attacker.name} usou ${move.name}!`);
+    if(Math.random()*100 > move.acc){ await battleMessage('Mas errou!'); return; }
+    if(move.stat){ await battleMessage('Os atributos mudaram.'); return; }
+    const res = calcDamage(attacker,defender,move);
+    defender.hp = clamp(defender.hp - res.dmg, 0, defender.maxHp);
+    animateHit(side==='player'?'enemy':'player', move.fx);
+    audio.sfx('hit'); renderBattle('locked'); await sleep(state.settings.motion?650:80);
+    if(res.mult===0) await battleMessage('Não teve efeito...');
+    else if(res.mult>1) await battleMessage('Foi super efetivo!');
+    else if(res.mult<1) await battleMessage('Não foi muito efetivo...');
+    if(res.crit) await battleMessage('Golpe crítico!');
+    if(move.drain && res.dmg>0){ const heal=Math.floor(res.dmg*move.drain); attacker.hp=clamp(attacker.hp+heal,0,attacker.maxHp); await battleMessage(`${attacker.name} drenou energia.`); }
+    if(move.statusChance && defender.hp>0){ const [status,chance] = Object.entries(move.statusChance)[0]; if(!defender.status && Math.random()<chance){ defender.status=status; await battleMessage(`${defender.name} ficou ${status==='poison'?'envenenado':'queimado'}!`); } }
+    await statusTick(defender);
+  }
+  async function statusTick(mon){
+    if(!mon.status || mon.hp<=0) return;
+    const loss = Math.max(1, Math.floor(mon.maxHp/12)); mon.hp=clamp(mon.hp-loss,0,mon.maxHp); renderBattle('locked'); audio.sfx('dmg');
+    await battleMessage(`${mon.name} sofreu com ${mon.status==='poison'?'veneno':'queimadura'}.`);
+  }
+  function animateHit(target, fx){
+    const el = target==='enemy' ? $('.enemy-sprite') : $('.player-sprite');
+    if(!el || !state.settings.motion) return;
+    el.classList.remove('hit','slash','spark','fire','water','faint'); void el.offsetWidth; el.classList.add(fx==='fire'?'fire':fx==='spark'?'spark':fx==='water'?'water':'hit'); setTimeout(()=>el.classList.remove('hit','fire','spark','water'),500);
+  }
+  async function enemyTurn(){
+    const e=battle.enemy; if(e.hp<=0) return;
+    const moves=e.moves.filter(m=>m.pp>0); const best = moves.sort((a,b)=>calcMult(MOVES[b.id].type, DEX[battle.player.mon].types)-calcMult(MOVES[a.id].type, DEX[battle.player.mon].types))[0] || e.moves[0];
+    best.pp = Math.max(0,best.pp-1); await performMove(e,battle.player,MOVES[best.id],'enemy');
+    if(battle.player.hp<=0) await playerFainted(); else renderBattle('action');
+  }
+  async function enemyFainted(){
+    $('.enemy-sprite')?.classList.add('faint'); audio.sfx('win'); await battleMessage(`${battle.enemy.name} caiu!`);
+    await gainExp(battle.player,battle.enemy);
+    if(battle.type==='trainer' && battle.enemyTeam && battle.enemyIndex < battle.enemyTeam.length-1){ battle.enemyIndex++; battle.enemy=battle.enemyTeam[battle.enemyIndex]; state.seen[battle.enemy.mon]=true; await battleMessage(`${battle.trainer.name} enviou ${battle.enemy.name}!`); renderBattle('action'); return; }
+    await finishBattle(true);
+  }
+  async function playerFainted(){
+    $('.player-sprite')?.classList.add('faint'); audio.sfx('lose'); await battleMessage(`${battle.player.name} caiu!`);
+    const next = state.party.find(m=>m.hp>0);
+    if(next){ battle.player=next; await battleMessage(`Vai, ${next.name}!`); renderBattle('action'); return; }
+    await battleMessage('Você perdeu a batalha...');
+    state.money = Math.floor(state.money*.85); healAll(); state.map='cove'; state.x=7; state.y=10; await finishBattle(false); await say(['Você acordou em Cove com a equipe curada.']);
+  }
+  async function gainExp(mon, enemy){
+    let amount = Math.floor((DEX[enemy.mon].exp * enemy.level)/7);
+    if(battle.type==='trainer') amount = Math.floor(amount*1.35);
+    mon.exp += amount; await battleMessage(`${mon.name} ganhou ${amount} EXP.`);
+    while(mon.exp >= mon.next){ mon.exp -= mon.next; mon.level++; mon.stats=calcStats(DEX[mon.mon],mon.level,mon.iv); const gain=mon.stats.hp-mon.maxHp; mon.maxHp=mon.stats.hp; mon.hp+=gain; mon.next=nextExp(mon.level); audio.sfx('level'); await battleMessage(`${mon.name} subiu para o Lv.${mon.level}!`); learnMoves(mon); await maybeEvolve(mon); }
+  }
+  function learnMoves(mon){
+    const known = mon.moves.map(m=>m.id);
+    (LEARNSETS[mon.mon]||[]).filter(([lvl,id])=>lvl===mon.level && !known.includes(id)).forEach(([_,id])=>{ if(mon.moves.length>=4) mon.moves.shift(); mon.moves.push({id,pp:MOVES[id].pp}); battle.log.push(`${mon.name} aprendeu ${MOVES[id].name}!`); });
+  }
+  async function maybeEvolve(mon){
+    const evo=DEX[mon.mon].evo; if(evo && mon.level>=evo.level){ await battleMessage(`${mon.name} está evoluindo!`); mon.mon=evo.to; mon.name=DEX[evo.to].name; state.seen[evo.to]=true; state.caught[evo.to]=true; mon.stats=calcStats(DEX[mon.mon],mon.level,mon.iv); mon.maxHp=mon.stats.hp; mon.hp=mon.maxHp; await battleMessage(`Parabéns! Agora é ${mon.name}.`); }
+  }
+  async function finishBattle(won){
+    if(won){ state.stats.wins++; if(battle.type==='trainer' && battle.trainer){ state.defeated[battle.trainer.flag]=true; state.money += battle.trainer.reward || 200; if(battle.trainer.boss){ state.badges.push('beaconBadge'); state.quest = 'Você venceu o ginásio. Explore a Costa Nox atrás de Pokémon raros e complete a Dex.'; } await battleMessage(`Você recebeu ₽ ${battle.trainer.reward || 200}.`); if(battle.trainer.after) await battleMessage(battle.trainer.after[0]); } }
+    saveSilent(); const oldMap=state.map; battle=null; showScreen('game'); updateHud(); renderMap(); audio.play(MAPS[oldMap]?.music || 'route');
+  }
+  async function runBattle(){
+    if(battle.type==='trainer'){ await battleMessage('Não dá para fugir de uma batalha de treinador.'); renderBattle('action'); return; }
+    if(Math.random()<.72){ await battleMessage('Você fugiu com segurança.'); battle=null; showScreen('game'); renderMap(); startMapMusic(); } else { await battleMessage('Não conseguiu fugir!'); await enemyTurn(); }
+  }
+  async function useBattleItem(id){
+    if(locks.battle) return; locks.battle=true;
+    if(!takeItem(id,1)){ locks.battle=false; return; }
+    const it=ITEMS[id];
+    if(it.catch){
+      if(battle.type!=='wild'){ addItem(id,1); await battleMessage('Você não pode capturar Pokémon de treinador.'); locks.battle=false; renderBattle('action'); return; }
+      audio.sfx('catch'); await battleMessage(`Você usou ${it.name}!`); $('.enemy-sprite')?.classList.add('capture'); await sleep(800);
+      const e=battle.enemy; const hpFactor = (3*e.maxHp - 2*e.hp) / (3*e.maxHp); const chance = clamp((DEX[e.mon].catchRate/255) * hpFactor * it.catch + (e.status?.length ? .12 : 0), .05, .92);
+      if(Math.random()<chance){ state.caught[e.mon]=true; state.seen[e.mon]=true; addPokemon({...e, uid:uid(), hp:e.hp, fainted:false}); audio.sfx('win'); await battleMessage(`Tum! ${e.name} foi capturado!`); battle=null; showScreen('game'); updateHud(); renderMap(); startMapMusic(); saveSilent(); locks.battle=false; return; }
+      audio.sfx('fail'); await battleMessage(`${e.name} escapou!`); await enemyTurn(); locks.battle=false; return;
     }
-    state.player.money -= item.price;
-    addItem(key, 1);
-    modal.close();
-    say(`Você comprou ${item.name}.`);
-    render();
-  };
-  modal.showModal();
-}
-
-
-function openBagMenu() {
-  playSfx("open");
-  const entries = Object.entries(state.player.bag).filter(([, qty]) => qty > 0);
-  if (!entries.length) {
-    say("Mochila vazia.");
-    return;
+    if(it.heal){ const m=battle.player; m.hp=clamp(m.hp+it.heal,0,m.maxHp); audio.sfx('heal'); await battleMessage(`${m.name} recuperou HP.`); await enemyTurn(); locks.battle=false; return; }
+    if(it.cure){ if(battle.player.status===it.cure){ battle.player.status=null; await battleMessage(`${battle.player.name} foi curado.`); } else await battleMessage('Não teve efeito.'); await enemyTurn(); locks.battle=false; return; }
+    locks.battle=false;
   }
-  modalContent.innerHTML = `
-    <h3>Mochila</h3>
-    <div class="choice-grid">
-      ${entries.map(([key, qty]) => {
-        const item = ITEMS[key];
-        return `<button class="choice-btn" value="${key}" type="submit"><img src="${item.icon}" alt="${item.name}"><strong>${item.name}</strong><small>x${qty}</small></button>`;
-      }).join("")}
-    </div>
-    <div class="modal-actions"><button class="mini-btn" value="close">Fechar</button></div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const key = e.submitter?.value;
-    if (key === "close") return modal.close();
-    modal.close();
-    useFieldItem(key);
-  };
-  modal.showModal();
-}
+  async function switchMon(i){
+    if(locks.battle) return; locks.battle=true;
+    battle.player=state.party[i]; await battleMessage(`Vai, ${battle.player.name}!`); await enemyTurn(); locks.battle=false;
+  }
 
-function useFieldItem(key) {
-  const item = ITEMS[key];
-  if (!item || (state.player.bag[key] || 0) <= 0) return;
+  function showTerms(){
+    $('#modal').classList.add('open'); $('#modal').innerHTML = `<div class="modal-card summary"><button class="x">×</button>${renderTermsHtml()}</div>`; $('#modal .x').onclick=()=>$('#modal').classList.remove('open');
+  }
 
-  if (item.kind === "heal") {
-    choosePokemon("Usar em qual Pokémon?", mon => mon.hp > 0 && mon.hp < mon.maxHp, idx => {
-      const mon = state.player.party[idx];
-      removeItem(key, 1);
-      mon.hp = clamp(mon.hp + item.amount, 0, mon.maxHp);
-      playSfx("heal");
-      say(`${item.name} restaurou HP de ${mon.nickname || mon.name}.`);
-      render();
+  function bindControls(){
+    const map = {ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',w:'up',s:'down',a:'left',d:'right'};
+    window.addEventListener('keydown', e=>{
+      if(e.repeat) return;
+      if(map[e.key]){ e.preventDefault(); move(map[e.key]); }
+      if(e.key==='z' || e.key==='Enter') interact();
+      if(e.key==='x' || e.key==='Escape') menuOpen?closeMenu():openMenu();
     });
-    return;
+    $$('[data-dir]').forEach(b=>b.onclick=()=>move(b.dataset.dir));
+    $('#aBtn').onclick=interact; $('#bBtn').onclick=()=>menuOpen?closeMenu():openMenu(); $('#menuBtn').onclick=()=>openMenu();
+    $('#quickParty').onclick=()=>openMenu('party'); $('#quickBag').onclick=()=>openMenu('bag'); $('#quickDex').onclick=()=>openMenu('dex');
+    $('#modal').addEventListener('click', e=>{ if(e.target.id==='modal') $('#modal').classList.remove('open'); });
   }
 
-  if (item.kind === "status") {
-    choosePokemon("Curar qual Pokémon?", mon => item.cures.includes(mon.status), idx => {
-      const mon = state.player.party[idx];
-      removeItem(key, 1);
-      mon.status = null;
-      say(`${item.name} curou ${mon.nickname || mon.name}.`);
-      render();
-    });
-    return;
+  function boot(){
+    bindControls(); renderTitle(); showScreen('title');
+    const tick = ts => { if(ts-lastRender>80 && activeScreen==='game' && !battle) { renderMap(); lastRender=ts; } requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+    if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
   }
-
-  if (key === "repel") {
-    removeItem(key, 1);
-    state.player.repelSteps = 14;
-    say("Você usou Repelente. Encontros selvagens ficam raros por alguns passos.");
-    render();
-    return;
-  }
-
-  if (key === "escapeRope") {
-    removeItem(key, 1);
-    state.player.location = "brisa";
-    say("Você usou Corda de Fuga e voltou para Cove.");
-    render();
-    return;
-  }
-
-  say("Esse item não pode ser usado agora.");
-}
-
-function openBox() {
-  if (!state.player.box.length) {
-    say("O Box está vazio.");
-    return;
-  }
-  modalContent.innerHTML = `
-    <h3>PC / Box</h3>
-    <p>${state.player.box.length} Pokémon guardados.</p>
-    <div class="choice-grid">
-      ${state.player.box.map((mon, idx) => `<button class="choice-btn" value="${idx}" type="submit" ${state.player.party.length >= 6 ? "disabled" : ""}>
-        <img src="${monFront(mon.id)}" onerror="this.src='${monFallback(mon.id)}'" alt="${mon.name}">
-        <strong>${mon.nickname || mon.name}</strong>
-        <small>Lv.${mon.level}</small>
-      </button>`).join("")}
-    </div>
-    <p>${state.player.party.length >= 6 ? "Equipe cheia. Depósito manual fica para a próxima versão." : "Escolha um Pokémon para trazer para a equipe."}</p>
-    <div class="modal-actions"><button class="mini-btn" value="close">Fechar</button></div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const value = e.submitter?.value;
-    if (value === "close") return modal.close();
-    const idx = Number(value);
-    const [mon] = state.player.box.splice(idx, 1);
-    state.player.party.push(mon);
-    modal.close();
-    say(`${mon.nickname || mon.name} saiu do Box e entrou na equipe.`);
-    render();
-  };
-  modal.showModal();
-}
-
-function openPartyMenu() {
-  playSfx("open");
-  const rows = state.player.party.map((mon, idx) => `
-    <button class="choice-btn" value="${idx}" type="submit">
-      <img src="${monFront(mon.id)}" onerror="this.src='${monFallback(mon.id)}'" alt="${mon.name}">
-      <strong>${mon.nickname || mon.name}</strong>
-      <small>Lv.${mon.level} • HP ${mon.hp}/${mon.maxHp}</small>
-    </button>`).join("");
-  modalContent.innerHTML = `
-    <h3>Equipe</h3>
-    <div class="choice-grid">${rows}</div>
-    <div class="modal-actions"><button class="mini-btn" value="close">Fechar</button></div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const value = e.submitter?.value;
-    if (value === "close") return modal.close();
-    modal.close();
-    showPokemonDetails(Number(value));
-  };
-  modal.showModal();
-}
-
-function showPokemonDetails(idx) {
-  const mon = state.player.party[idx];
-  if (!mon) return;
-  const moves = mon.moves.map(slot => {
-    const move = MOVES[slot.key];
-    return `<div class="move-card"><b>${move.name}</b><span>${TYPES[move.type]} • PP ${slot.pp}/${move.pp}</span><small>${move.power ? `Poder ${move.power}` : "status"}</small></div>`;
-  }).join("");
-  modalContent.innerHTML = `
-    <h3>${mon.nickname || mon.name}</h3>
-    <div class="party-detail">
-      <img src="${monFront(mon.id)}" onerror="this.src='${monFallback(mon.id)}'" alt="${mon.name}">
-      <div>
-        <p>Lv.${mon.level} • ${mon.types.map(t => TYPES[t]).join(" / ")}</p>
-        <div class="hp-label"><b>HP</b><div class="hpbar"><i style="width:${pct(mon.hp, mon.maxHp)}%"></i></div></div>
-        <small>${mon.hp}/${mon.maxHp} HP • EXP ${mon.exp}/${mon.nextExp}</small>
-        <div class="expbar"><i style="width:${pct(mon.exp, mon.nextExp)}%"></i></div>
-        <p>ATQ ${mon.stats.atk} • DEF ${mon.stats.def} • VEL ${mon.stats.spd}</p>
-      </div>
-    </div>
-    <h4>Golpes</h4>
-    <div class="move-grid">${moves}</div>
-    <div class="modal-actions">
-      <button class="mini-btn" value="potion">Usar Poção</button>
-      <button class="mini-btn" value="close">Fechar</button>
-    </div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const value = e.submitter?.value;
-    if (value === "potion") {
-      if ((state.player.bag.potion || 0) <= 0 || mon.hp <= 0 || mon.hp >= mon.maxHp) {
-        modal.close(); say("Não dá para usar Poção agora."); return;
-      }
-      removeItem("potion", 1);
-      mon.hp = clamp(mon.hp + ITEMS.potion.amount, 0, mon.maxHp);
-      modal.close(); say(`Poção usada em ${mon.nickname || mon.name}.`); render(); return;
-    }
-    modal.close();
-  };
-  modal.showModal();
-}
-
-function choosePokemon(title, filter, callback) {
-  const choices = state.player.party.map((mon, idx) => {
-    const disabled = !filter(mon);
-    return `<button class="choice-btn" value="${idx}" type="submit" ${disabled ? "disabled" : ""}>
-      <img src="${monFront(mon.id)}" onerror="this.src='${monFallback(mon.id)}'" alt="${mon.name}">
-      <strong>${mon.nickname || mon.name}</strong><small>HP ${mon.hp}/${mon.maxHp}${mon.status ? ` • ${statusName(mon.status)}` : ""}</small>
-    </button>`;
-  }).join("");
-  modalContent.innerHTML = `<h3>${title}</h3><div class="choice-grid">${choices}</div><div class="modal-actions"><button class="mini-btn" value="close">Cancelar</button></div>`;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const value = e.submitter?.value;
-    if (value === "close") return modal.close();
-    modal.close();
-    callback(Number(value));
-  };
-  modal.showModal();
-}
-
-function openMap() {
-  playSfx("open");
-  const current = LOCATIONS[state.player.location];
-  const nodes = LOCATION_ORDER.map(id => {
-    const loc = LOCATIONS[id];
-    const locked = loc.requires?.badge && !state.player.badges.includes(loc.requires.badge);
-    const isBack = id === state.player.lastLocation;
-    const canTravel = !locked && current.exits.includes(id) && (routeIsComplete() || isBack);
-    const here = id === state.player.location;
-    const icon = loc.kind === "town" ? "⌂" : loc.kind === "cave" ? "◆" : loc.kind === "lake" ? "≈" : "•";
-    return `<button class="choice-btn map-node ${here ? "current" : ""}" value="${id}" type="submit" ${(!canTravel || here) ? "disabled" : ""}>
-      <span class="map-dot">${icon}</span>
-      <span><strong>${loc.name}</strong><small>${locationProgressText(id)}</small></span>
-      <small>${here ? "aqui" : locked ? "lock" : canTravel ? "ir" : isRouteLike(current) ? `${routeRemaining()} passos` : "rota"}</small>
-    </button>`;
-  }).join("");
-  modalContent.innerHTML = `
-    <h3>Mapa da Região Veyra</h3>
-    <p>Use os caminhos ligados ao local atual. Bloqueios somem com insígnias.</p>
-    <div class="map-list">${nodes}</div>
-    <div class="modal-actions"><button class="mini-btn" value="close">Fechar</button></div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const value = e.submitter?.value;
-    if (!value || value === "close") return modal.close();
-    modal.close();
-    travel(value);
-  };
-  modal.showModal();
-}
-
-function openJournal() {
-  playSfx("open");
-  const badges = state.player.badges.length ? state.player.badges.map(b => b === "coral" ? "Insígnia Coral" : "Insígnia Beacon").join(" • ") : "nenhuma";
-  modalContent.innerHTML = `
-    <h3>Diário</h3>
-    <div class="journal-list">
-      <div class="journal-item">Objetivo<small>${currentObjective()}</small></div>
-      <div class="journal-item">Local atual<small>${LOCATIONS[state.player.location].name}</small></div>
-      <div class="journal-item">Insígnias<small>${badges}</small></div>
-      <div class="journal-item">Progresso<small>${state.stats.wins} vitórias • ${state.stats.captures} capturas • ${state.stats.steps} viagens</small></div>
-      <div class="journal-item">Assinatura<small>Jogo feito por ${state.player.name || "Luiz Matheus"} / Luix Studios.</small></div>
-    </div>
-    <div class="modal-actions"><button class="mini-btn primary" value="save">Salvar agora</button><button class="mini-btn" value="close">Fechar</button></div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    if (e.submitter?.value === "save") saveGame(false);
-    modal.close();
-  };
-  modal.showModal();
-}
-
-function openDex() {
-  playSfx("open");
-  const ids = Object.keys(POKEMON).map(Number).sort((a, b) => a - b);
-  const cards = ids.map(id => {
-    const seen = state.player.seen.includes(id);
-    const caught = state.player.caught.includes(id);
-    const mon = POKEMON[id];
-    return `<button class="dex-card ${seen ? "" : "unseen"}" value="${id}" type="submit" ${seen ? "" : "disabled"}>
-      <img src="${monFront(id)}" onerror="this.src='${monFallback(id)}'" alt="${seen ? mon.name : "Pokémon não visto"}">
-      <strong>${seen ? mon.name : "???"}</strong>
-      <small>#${String(id).padStart(3, "0")} • ${caught ? "capturado" : seen ? "visto" : "não visto"}</small>
-    </button>`;
-  }).join("");
-  modalContent.innerHTML = `
-    <h3>Pokédex Veyra</h3>
-    <p>${state.player.seen.length} vistos • ${state.player.caught.length} capturados</p>
-    <div class="dex-grid">${cards}</div>
-    <div class="modal-actions"><button class="mini-btn" value="close">Fechar</button></div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const value = e.submitter?.value;
-    modal.close();
-    if (value && value !== "close") showDexDetails(Number(value));
-  };
-  modal.showModal();
-}
-
-function showDexDetails(id) {
-  const mon = POKEMON[id];
-  if (!mon || !state.player.seen.includes(id)) return openDex();
-  const caught = state.player.caught.includes(id);
-  const learn = mon.learn.map(([lvl, move]) => `<span>${lvl}: ${MOVES[move]?.name || move}</span>`).join("");
-  const areas = LOCATION_ORDER.filter(locId => LOCATIONS[locId].wild?.some(row => row[0] === id)).map(locId => LOCATIONS[locId].name).join(" • ") || "registro especial";
-  modalContent.innerHTML = `
-    <h3>#${String(id).padStart(3, "0")} ${mon.name}</h3>
-    <div class="dex-detail">
-      <img src="${monFront(id)}" onerror="this.src='${monFallback(id)}'" alt="${mon.name}">
-      <div>
-        <p><b>${mon.types.map(t => TYPES[t]).join(" / ")}</b></p>
-        <p>Status: ${caught ? "capturado" : "visto"}</p>
-        <p>Onde aparece: ${areas}</p>
-        <div class="move-chip-list">${learn}</div>
-      </div>
-    </div>
-    <div class="modal-actions"><button class="mini-btn" value="back">Voltar</button><button class="mini-btn" value="close">Fechar</button></div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const value = e.submitter?.value;
-    modal.close();
-    if (value === "back") openDex();
-  };
-  modal.showModal();
-}
-function openSettings() {
-  playSfx("open");
-  const saved = loadGame();
-  const settings = state?.settings || saved?.settings || loadSavedSettings();
-  modalContent.innerHTML = `
-    <h3>Configurações</h3>
-    <div class="modal-row">
-      <label>Texto</label>
-      <select name="text">
-        <option value="normal" ${settings.text === "normal" ? "selected" : ""}>Normal</option>
-        <option value="fast" ${settings.text === "fast" ? "selected" : ""}>Rápido</option>
-      </select>
-    </div>
-    <div class="modal-row">
-      <label>Tema</label>
-      <select name="theme">
-        <option value="crystal" ${settings.theme === "crystal" ? "selected" : ""}>Crystal</option>
-        <option value="night" ${settings.theme === "night" ? "selected" : ""}>Noite</option>
-      </select>
-    </div>
-    <div class="modal-row">
-      <label>Movimento</label>
-      <select name="motion">
-        <option value="true" ${settings.motion ? "selected" : ""}>Ligado</option>
-        <option value="false" ${!settings.motion ? "selected" : ""}>Reduzido</option>
-      </select>
-    </div>
-    <div class="modal-row two-cols">
-      <label>Música</label>
-      <select name="music">
-        <option value="true" ${settings.music ? "selected" : ""}>Ligada</option>
-        <option value="false" ${!settings.music ? "selected" : ""}>Desligada</option>
-      </select>
-    </div>
-    <div class="modal-row two-cols">
-      <label>Efeitos</label>
-      <select name="sfx">
-        <option value="true" ${settings.sfx ? "selected" : ""}>Ligados</option>
-        <option value="false" ${!settings.sfx ? "selected" : ""}>Desligados</option>
-      </select>
-    </div>
-    <div class="modal-row">
-      <label>Volume</label>
-      <input name="volume" type="range" min="0" max="100" step="5" value="${settings.volume ?? 70}">
-    </div>
-    <div class="modal-actions">
-      <button class="mini-btn primary" value="save">Salvar</button>
-      <button class="mini-btn" value="close">Fechar</button>
-    </div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    if (e.submitter?.value === "close") return modal.close();
-    const data = new FormData(modalContent);
-    const nextSettings = normalizeSettings({
-      text: data.get("text"),
-      theme: data.get("theme"),
-      motion: data.get("motion") === "true",
-      music: data.get("music") === "true",
-      sfx: data.get("sfx") === "true",
-      volume: Number(data.get("volume") || 70)
-    });
-    if (state?.player?.party?.length) {
-      state.settings = nextSettings;
-      saveGame(true);
-      render();
-    } else {
-      saveOnlySettings(nextSettings);
-    }
-    modal.close();
-  };
-  modal.showModal();
-}
-
-function startNewGame() {
-  AUDIO.ensure();
-  modalContent.innerHTML = `
-    <h3>Novo jogo</h3>
-    <p>${STORY_BEATS.intro}</p>
-    <div class="modal-row">
-      <label>Nome do treinador</label>
-      <input name="player" maxlength="14" value="Luiz" autocomplete="off">
-    </div>
-    <div class="modal-actions">
-      <button class="mini-btn primary" value="start">Começar</button>
-      <button class="mini-btn" value="close">Cancelar</button>
-    </div>
-  `;
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    if (e.submitter?.value === "close") return modal.close();
-    const data = new FormData(modalContent);
-    const name = String(data.get("player") || "Luiz").trim().slice(0, 14) || "Luiz";
-    state = freshState();
-    state.player.name = name;
-    state.player.location = "brisa";
-    state.flags.introActive = true;
-    state.flags.introStep = 0;
-    state.flags.introScene = INTRO_STEPS[0].scene;
-    modal.close();
-    setScreen("game");
-    playIntroStep();
-    render();
-  };
-  modal.showModal();
-}
-
-function playIntroStep() {
-  const step = INTRO_STEPS[state.flags.introStep];
-  if (!step) return openStarterChoice();
-  state.flags.introScene = step.scene;
-  say(step.text);
-  render();
-}
-
-function advanceIntro() {
-  state.flags.introStep += 1;
-  if (state.flags.introStep >= INTRO_STEPS.length) return openStarterChoice();
-  playIntroStep();
-}
-
-function skipIntroToStarter() {
-  state.flags.introStep = INTRO_STEPS.length;
-  state.flags.introScene = "lab";
-  openStarterChoice();
-}
-
-function openStarterChoice() {
-  modalContent.innerHTML = `
-    <h3>Escolha seu parceiro</h3>
-    <p>Aroeira: uma Poké Bola muda a rota inteira. Escolha com calma.</p>
-    <div class="starter-grid">
-      ${starterButton(1, "Bulbasaur", "seguro, resistente, ótimo contra Pedra e Água")}
-      ${starterButton(4, "Charmander", "ofensivo, rápido, bom contra Inseto e Grama")}
-      ${starterButton(7, "Squirtle", "defensivo, estável, forte contra Pedra e Fogo")}
-    </div>
-    <div class="modal-actions">
-      <button class="mini-btn primary" value="start">Confirmar</button>
-    </div>
-  `;
-  modalSelection = 1;
-  modalContent.querySelectorAll(".choice-btn").forEach(btn => {
-    btn.addEventListener("click", e => {
-      e.preventDefault();
-      modalSelection = Number(btn.dataset.id);
-      modalContent.querySelectorAll(".choice-btn").forEach(b => b.classList.remove("primary"));
-      btn.classList.add("primary");
-    });
-  });
-  modalContent.onsubmit = e => {
-    e.preventDefault();
-    const starter = createMon(modalSelection || 1, 5);
-    state.player.party.push(starter);
-    addSeen(starter.id);
-    addCaught(starter.id);
-    state.flags.starter = true;
-    state.flags.introActive = false;
-    state.flags.introScene = "town";
-    state.flags.introDone = true;
-    modal.close();
-    say(`Aroeira: ${starter.name} agora é seu parceiro. A Rota 01 espera lá fora.`);
-    saveGame(true);
-    render();
-  };
-  modal.showModal();
-}
-
-function starterButton(id, name, hint = "") {
-  return `<button class="choice-btn ${id === 1 ? "primary" : ""}" data-id="${id}" type="button">
-    <img src="${monFront(id)}" onerror="this.src='${monFallback(id)}'" alt="${name}">
-    <strong>${name}</strong>
-    <small>${hint}</small>
-  </button>`;
-}
-
-function continueGame() {
-  AUDIO.ensure();
-  const loaded = loadGame();
-  if (!loaded) {
-    state = freshState();
-    openSettings();
-    state = null;
-    alert("Nenhum save encontrado.");
-    return;
-  }
-  state = loaded;
-  battle = null;
-  setScreen("game");
-  const loc = LOCATIONS[state.player.location];
-  say(loc.text);
-  render();
-}
-
-
-function isStandaloneMode() {
-  return window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true;
-}
-
-function isIOSDevice() {
-  return /iphone|ipad|ipod/i.test(window.navigator.userAgent || "");
-}
-
-function updateInstallUI() {
-  const btn = $("#installBtn");
-  const hint = $("#installHint");
-  if (!btn || !hint) return;
-
-  if (isStandaloneMode()) {
-    btn.hidden = true;
-    hint.hidden = true;
-    return;
-  }
-
-  btn.hidden = false;
-  hint.hidden = false;
-  btn.textContent = deferredInstallPrompt ? "Instalar como app" : "Instalar no celular";
-  hint.textContent = isIOSDevice()
-    ? "No iPhone: Safari → Compartilhar → Adicionar à Tela de Início."
-    : "Também funciona como atalho/app quando publicado no GitHub Pages.";
-}
-
-function openInstallHelp() {
-  const ios = isIOSDevice();
-  modalContent.innerHTML = `
-    <h3>Instalar no celular</h3>
-    <p>${ios
-      ? "No iPhone, abra pelo Safari, toque no botão Compartilhar e escolha Adicionar à Tela de Início. Depois o jogo abre como app, sem a barra do navegador."
-      : "Quando o navegador permitir, toque em Instalar. Se não aparecer, use o menu do navegador e escolha Instalar app ou Adicionar à tela inicial."}</p>
-    <p>O save continua no próprio aparelho. Depois de publicado no GitHub Pages, o jogo também guarda arquivos principais em cache para abrir mais rápido.</p>
-    <div class="modal-actions"><button class="mini-btn primary" value="close">Entendi</button></div>
-  `;
-  modalContent.onsubmit = e => { e.preventDefault(); modal.close(); };
-  modal.showModal();
-}
-
-async function handleInstallClick() {
-  if (deferredInstallPrompt) {
-    deferredInstallPrompt.prompt();
-    try { await deferredInstallPrompt.userChoice; } catch {}
-    deferredInstallPrompt = null;
-    updateInstallUI();
-    return;
-  }
-  openInstallHelp();
-}
-
-function setupInstallExperience() {
-  const btn = $("#installBtn");
-  if (!btn) return;
-  btn.addEventListener("click", handleInstallClick);
-  window.addEventListener("beforeinstallprompt", event => {
-    event.preventDefault();
-    deferredInstallPrompt = event;
-    updateInstallUI();
-  });
-  window.addEventListener("appinstalled", () => {
-    deferredInstallPrompt = null;
-    updateInstallUI();
-  });
-  updateInstallUI();
-}
-
-function registerServiceWorker() {
-  if (!("serviceWorker" in navigator)) return;
-  if (!/^https?:$/.test(window.location.protocol)) return;
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(() => {});
-  });
-}
-
-function init() {
-  document.addEventListener("pointerdown", () => AUDIO.ensure(), { once: true });
-  document.addEventListener("click", event => { if (event.target.closest("button")) playSfx("tap"); });
-  setupInstallExperience();
-  registerServiceWorker();
-  $("#newGameBtn").addEventListener("click", startNewGame);
-  $("#continueBtn").addEventListener("click", continueGame);
-  $("#settingsBtn").addEventListener("click", openSettings);
-  $("#quickSaveBtn").addEventListener("click", () => saveGame(false));
-  $("#mapTopBtn").addEventListener("click", openMap);
-  $("#dockMenuBtn").addEventListener("click", openGameMenu);
-  $("#dockPartyBtn").addEventListener("click", openPartyMenu);
-  $("#dockMapBtn").addEventListener("click", openMap);
-  $("#dockSaveBtn").addEventListener("click", () => saveGame(false));
-  $("#openSettingsBtn").addEventListener("click", openSettings);
-  $("#toMenuBtn").addEventListener("click", () => { battle = null; setScreen("menu"); });
-  if (!loadGame()) $("#continueBtn").disabled = true;
-}
-
-init();
+  boot();
+})();

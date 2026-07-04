@@ -3,143 +3,74 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="description" content="RPG retrô textual/visual feito por Luiz Matheus / Luix Studios. Versão mobile PWA com sprites, áudio, transições, captura, batalhas e save." />
-  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#162d5a" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content="Pokémon Veyra" />
+  <meta name="apple-mobile-web-app-title" content="Veyra" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="format-detection" content="telephone=no" />
-  <meta name="theme-color" content="#8cad28" />
-  <title>Pokémon Veyra RPG v1.4</title>
+  <title>Pokémon Veyra</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" />
-  <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <noscript>Este jogo precisa de JavaScript ativado.</noscript>
-
-  <main id="app" class="app-shell" data-screen="menu">
-    <section id="menuScreen" class="screen screen-menu">
-      <div class="gbc-card title-card">
-        <p class="eyebrow">RPG retrô • v1.4</p>
-        <h1>Pokémon Veyra</h1>
-        <p class="subtitle">Uma aventura costeira fan-made feita por Luiz Matheus.</p>
-        <div class="pixel-stars" aria-hidden="true"></div>
+  <main class="app-shell">
+    <section id="titleScreen" class="screen title-screen is-active">
+      <div class="title-card">
+        <p class="eyebrow">Luiz Matheus apresenta</p>
+        <h1><span>Pokémon</span> Veyra</h1>
+        <p class="subtitle">Um RPG textual/top-down retrô feito para portfólio.</p>
+        <div class="fake-cartridge">
+          <div class="cart-line"></div><div class="cart-screen">VY</div><div class="cart-pins"></div>
+        </div>
+        <div id="titleActions" class="title-actions"></div>
+        <small class="legal-mini">Projeto fã não comercial. Pokémon pertence à Nintendo, The Pokémon Company, Creatures Inc. e GAME FREAK.</small>
       </div>
-
-      <nav class="menu-actions" aria-label="Menu principal">
-        <button id="newGameBtn" class="btn primary">Novo jogo</button>
-        <button id="continueBtn" class="btn">Continuar</button>
-        <button id="settingsBtn" class="btn">Configurações</button>
-        <button id="installBtn" class="btn install-btn" type="button">Instalar no celular</button>
-      </nav>
-
-      <p id="installHint" class="install-hint">No iPhone: Safari → Compartilhar → Adicionar à Tela de Início.</p>
-      <p class="tiny-credit">Criação: Luiz Matheus • Luix Studios</p>
     </section>
 
-    <section id="gameScreen" class="screen screen-game" hidden>
-      <header class="topbar">
-        <div>
-          <strong>Pokémon Veyra</strong>
-          <span id="saveState">sem save</span>
-        </div>
-        <div class="top-actions">
-          <button id="quickSaveBtn" class="mini-btn">Salvar</button>
-          <button id="mapTopBtn" class="mini-btn">Mapa</button>
-          <button id="openSettingsBtn" class="mini-btn">Config</button>
-          <button id="toMenuBtn" class="mini-btn">Menu</button>
-        </div>
-      </header>
+    <section id="cinematicScreen" class="screen cinematic-screen">
+      <div class="cinematic-noise"></div>
+      <div id="cinematicBox" class="cinematic-box"></div>
+    </section>
 
-      <div class="layout">
-        <section class="stage gbc-panel">
-          <div id="locationBackdrop" class="location-backdrop town">
-            <div class="scanlines" aria-hidden="true"></div>
-            <div id="pixelScene" class="pixel-scene" aria-hidden="true"></div>
-            <div class="cloud c1" aria-hidden="true"></div>
-            <div class="cloud c2" aria-hidden="true"></div>
-            <div class="route-ground" aria-hidden="true"></div>
-            <div class="trainer-dot player" aria-hidden="true"></div>
-            <div class="trainer-dot npc" aria-hidden="true"></div>
-          </div>
-
-          <div class="location-head">
-            <span id="chapterTag">Capítulo 1</span>
-            <h2 id="locationName">Cove</h2>
-          </div>
-
-          <div id="transitionFx" class="transition-fx" aria-hidden="true"></div>
-
-          <div id="battleView" class="battle-view" hidden>
-            <div class="battle-field">
-              <div class="enemy-side">
-                <div id="enemyHud" class="battle-hud compact"></div>
-                <img id="enemySprite" alt="Pokémon adversário" class="mon-sprite enemy" />
-              </div>
-              <div class="player-side">
-                <img id="playerSprite" alt="Seu Pokémon" class="mon-sprite player-mon" />
-                <div id="playerHud" class="battle-hud"></div>
-              </div>
-            </div>
-          </div>
-
-          <div class="textbox" role="status" aria-live="polite">
-            <p id="mainText">Carregando...</p>
-          </div>
-
-          <div id="actionGrid" class="action-grid"></div>
+    <section id="gameScreen" class="screen game-screen">
+      <div class="phone-safe">
+        <header class="game-topbar">
+          <div><b id="locName">Cove</b><span id="questText">...</span></div>
+          <div class="hud-right"><span id="moneyText">₽ 0</span><div id="partyHud" class="party-hud"></div></div>
+        </header>
+        <div id="routeProgressWrap" class="route-progress" hidden><i id="routeProgress"></i></div>
+        <section class="gb-frame">
+          <canvas id="mapCanvas" aria-label="Mapa top-down do jogo" width="240" height="160"></canvas>
+          <div id="transition" class="transition"></div>
         </section>
-
-        <aside class="side gbc-panel">
-          <div class="trainer-card">
-            <div>
-              <span class="label">Treinador</span>
-              <strong id="playerName">Luiz</strong>
-            </div>
-            <div class="money" id="playerMoney">₽ 0</div>
+        <div id="dialogue" class="dialogue"><p>Use o direcional. A: interagir. B: menu.</p></div>
+        <div class="quick-row">
+          <button id="quickParty"><span>●</span> Equipe</button>
+          <button id="quickBag"><span>▣</span> Bolsa</button>
+          <button id="quickDex"><span>◇</span> Dex</button>
+          <button id="menuBtn"><span>☰</span> Menu</button>
+        </div>
+        <section class="controls" aria-label="Controles de jogo">
+          <div class="dpad">
+            <button data-dir="up">▲</button>
+            <button data-dir="left">◀</button>
+            <button data-dir="right">▶</button>
+            <button data-dir="down">▼</button>
           </div>
-
-          <div class="objective-card">
-            <span class="label">Objetivo</span>
-            <strong id="objectiveText">Comece a jornada</strong>
+          <div class="ab-buttons">
+            <button id="aBtn">A</button>
+            <button id="bBtn">B</button>
           </div>
-
-          <div class="badges">
-            <span class="label">Insígnias</span>
-            <div id="badgeList" class="badge-list"></div>
-          </div>
-
-          <div>
-            <span class="label">Equipe</span>
-            <div id="partyList" class="party-list"></div>
-          </div>
-
-          <div>
-            <span class="label">Mochila</span>
-            <div id="bagList" class="bag-list"></div>
-          </div>
-
-          <div>
-            <span class="label">Pokédex</span>
-            <div id="dexMini" class="dex-mini">0 vistos • 0 capturados</div>
-          </div>
-        </aside>
+        </section>
       </div>
-
-      <nav class="mobile-dock" aria-label="Atalhos do jogo">
-        <button id="dockMenuBtn" class="dock-btn" type="button">Menu</button>
-        <button id="dockPartyBtn" class="dock-btn" type="button">Equipe</button>
-        <button id="dockMapBtn" class="dock-btn" type="button">Mapa</button>
-        <button id="dockSaveBtn" class="dock-btn" type="button">Salvar</button>
-      </nav>
     </section>
+
+    <section id="battleScreen" class="screen battle-screen"></section>
   </main>
 
-  <dialog id="modal" class="modal">
-    <form id="modalContent" method="dialog" class="modal-box"></form>
-  </dialog>
+  <div id="menu" class="menu-layer"></div>
+  <div id="modal" class="modal-layer"></div>
+  <div id="toast" class="toast"></div>
 
   <script src="src/data.js"></script>
   <script src="src/game.js"></script>
